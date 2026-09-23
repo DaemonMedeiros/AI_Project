@@ -1,13 +1,26 @@
 # =========================================================
 #  Portable Raylib + w64devkit Makefile
-#  Everything is pointed at the thumb drive so this project
-#  builds the same on any machine you plug D: into.
+#  The compiler and raylib live in packages/ inside this repo,
+#  so this builds the same on any machine you clone it onto.
 # =========================================================
 
 # ---- Portable toolchain / library locations ----
-# Default to 64-bit build
-RAYLIB_PATH    := C:/raylib-6.0_win64_mingw-w64
-COMPILER_PATH  := C:/w64devkit
+# Everything lives inside packages/ in the repo, so this builds
+# identically no matter where the repo is cloned.
+PACKAGES_DIR   := packages
+COMPILER_PATH  := $(PACKAGES_DIR)/w64devkit
+
+# Default to 64-bit build; override with `make ARCH=x86` (or use the
+# "Build x86" / "Build x64" tasks, which do this for you).
+ARCH ?= x64
+
+ifeq ($(ARCH),x86)
+    RAYLIB_PATH := $(PACKAGES_DIR)/raylib-6.0_win32_mingw-w64
+else ifeq ($(ARCH),x64)
+    RAYLIB_PATH := $(PACKAGES_DIR)/raylib-6.0_win64_mingw-w64
+else
+    $(error Unknown ARCH "$(ARCH)" - use x86 or x64)
+endif
 
 CXX   := $(COMPILER_PATH)/bin/g++.exe
 CC    := $(COMPILER_PATH)/bin/gcc.exe
@@ -56,9 +69,19 @@ LDLIBS  := -lraylib -lopengl32 -lgdi32 -lwinmm -static -static-libgcc -static-li
 #  Targets
 # =========================================================
 
-.PHONY: all run clean resources
+.PHONY: all run clean resources x64 x86
 
 all: $(TARGET) resources
+
+# Force a specific architecture (re-invokes make with ARCH set,
+# then rebuilds from scratch since the two archs aren't binary compatible)
+x64:
+	$(MAKE) clean
+	$(MAKE) ARCH=x64 all
+
+x86:
+	$(MAKE) clean
+	$(MAKE) ARCH=x86 all
 
 # Link
 $(TARGET): $(OBJS) | $(BIN_DIR)

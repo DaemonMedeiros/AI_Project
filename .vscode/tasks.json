@@ -4,7 +4,7 @@
         {
             "label": "Build (make)",
             "type": "shell",
-            "command": "C:/w64devkit/bin/make.exe",
+            "command": "${workspaceFolder}/packages/w64devkit/bin/make.exe",
             "args": [],
             "options": {
                 "cwd": "${workspaceFolder}"
@@ -17,7 +17,7 @@
         {
             "label": "Run (make run)",
             "type": "shell",
-            "command": "C:/w64devkit/bin/make.exe",
+            "command": "${workspaceFolder}/packages/w64devkit/bin/make.exe",
             "args": ["run"],
             "options": {
                 "cwd": "${workspaceFolder}"
@@ -30,7 +30,7 @@
         {
             "label": "Clean (make clean)",
             "type": "shell",
-            "command": "C:/w64devkit/bin/make.exe",
+            "command": "${workspaceFolder}/packages/w64devkit/bin/make.exe",
             "args": ["clean"],
             "options": {
                 "cwd": "${workspaceFolder}"
@@ -39,7 +39,7 @@
         {
             "label": "Build x64",
             "type": "shell",
-            "command": "C:/w64devkit/bin/make.exe",
+            "command": "${workspaceFolder}/packages/w64devkit/bin/make.exe",
             "args": ["x64"],
             "options": {
                 "cwd": "${workspaceFolder}"
@@ -48,7 +48,7 @@
         {
             "label": "Build x86",
             "type": "shell",
-            "command": "C:/w64devkit/bin/make.exe",
+            "command": "${workspaceFolder}/packages/w64devkit/bin/make.exe",
             "args": ["x86"],
             "options": {
                 "cwd": "${workspaceFolder}"

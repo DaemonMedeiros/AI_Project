@@ -1,18 +1,18 @@
 {
     // ---- IntelliSense (C/C++ extension) ----
-    "C_Cpp.default.compilerPath": "C:/w64devkit/bin/g++.exe",
+    "C_Cpp.default.compilerPath": "${workspaceFolder}/packages/w64devkit/bin/g++.exe",
     "C_Cpp.default.cStandard": "c17",
     "C_Cpp.default.cppStandard": "c++17",
     "C_Cpp.default.intelliSenseMode": "windows-gcc-x64",
     "C_Cpp.default.includePath": [
         "${workspaceFolder}/include/**",
         "${workspaceFolder}/src/**",
-        "C:/raylib-6.0_win64_mingw-w64/include"
+        "${workspaceFolder}/packages/raylib-6.0_win64_mingw-w64/include"
     ],
 
     // ---- Make sure the integrated terminal can find gcc/g++/make/gdb ----
     "terminal.integrated.env.windows": {
-        "PATH": "C:\\w64devkit\\bin;${env:PATH}"
+        "PATH": "${workspaceFolder}\\packages\\w64devkit\\bin;${env:PATH}"
     },
 
     // ---- File associations so .hpp is treated as C++ ----
