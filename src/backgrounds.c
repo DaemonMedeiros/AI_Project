@@ -372,15 +372,6 @@ static void BakeOne(BackgroundType type)
             case BG_DESERT_NIGHT: BuildDesert(true);          break;
             default: break;
         }
-
-        /* Subtle vignette */
-        for (int i = 0; i < 60; i++)
-        {
-            float t = (float)i / 60.0f;
-            unsigned char a = (unsigned char)(110 * t * t);
-            DrawRectangleLines(i, i, BG_WIDTH - i * 2, BG_HEIGHT - i * 2,
-                               (Color){ 0, 0, 0, a });
-        }
     EndTextureMode();
 }
 

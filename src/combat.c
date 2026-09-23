@@ -863,18 +863,20 @@ void CombatDraw(int playerHealth, int maxPlayerHealth,
         }
     }
 
-    /* ---------- Message box ---------- */
+    /* ---------- Message box: dedicated slot at the top-center ----------
+     * Anchored just below the score/background label so it never
+     * overlaps the centered menu or the bottom health bars. */
     if (phase == PHASE_MESSAGE)
     {
         const int fontSize = 20;
         int textW = MeasureText(message, fontSize);
         int boxW  = textW + 60;
-        if (boxW < 300) boxW = 300;
+        if (boxW < 320) boxW = 320;
         if (boxW > 760) boxW = 760;
 
-        int boxH = 56;
+        int boxH = 52;
         int bx = (800 - boxW) / 2;
-        int by = 600 - 90;
+        int by = 76;                            /* just under HUD text */
 
         DrawRectangle(bx, by, boxW, boxH, (Color){ 0, 0, 0, 210 });
         DrawRectangleLines(bx, by, boxW, boxH, WHITE);

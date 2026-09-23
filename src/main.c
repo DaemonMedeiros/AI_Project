@@ -306,9 +306,12 @@ static void DrawWorld(void)
         {
             bool facingRight = (cosf(player.facingAngle) >= 0.0f);
 
+            /* Shadow sits under the knight's feet. The knight is drawn
+             * with his feet ~34px below the sprite anchor (which is
+             * player.position). */
             DrawEllipse((int)player.position.x,
-                        (int)(player.position.y + 18),
-                        14.0f, 5.0f, (Color){ 0, 0, 0, 100 });
+                        (int)(player.position.y + 36),
+                        16.0f, 5.0f, (Color){ 0, 0, 0, 100 });
 
             CombatantPose pose = { 0.0f, worldTime };
             CombatantDrawKnight(player.position, facingRight, pose);
