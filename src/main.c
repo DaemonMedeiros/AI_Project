@@ -1,14 +1,17 @@
 /* ============================================================
  * main.c - Simple Turn-Based Fantasy RPG
  *
- * World / terrain generation lives in terrain.c; the combat
- * system (turn logic + spell VFX) lives in combat.c.
+ * World terrain lives in terrain.c. Combat (turn logic + spell
+ * VFX) lives in combat.c. Battle backgrounds and combatant
+ * sprites live in backgrounds.c / combatants.c.
  * ============================================================ */
-
 #include "raylib.h"
 #include "raymath.h"
 #include "../include/terrain.h"
 #include "../include/combat.h"
+#include "../include/backgrounds.h"
+#include "../include/combatants.h"
+
 #include <stdbool.h>
 #include <stdio.h>
 #include <string.h>
@@ -66,6 +69,8 @@ static GameState state;
 static float     encounterCooldown;
 static Camera2D  camera;
 
+static float worldTime = 0.0f;
+
 /* ------------------------------------------------------------
  *  Forward declarations
  * ---------------------------------------------------------- */
@@ -92,16 +97,21 @@ int main(void)
     SetTargetFPS(60);
 
     TerrainInit();
+    BackgroundsInit();
     CombatInit();
     ResetGame();
 
     while (!WindowShouldClose())
     {
         float dt = GetFrameTime();
+        worldTime += dt;
 
         switch (state)
         {
-            case GS_WORLD:    UpdateWorld(dt);   break;
+            case GS_WORLD:
+                UpdateWorld(dt);
+                break;
+
             case GS_COMBAT:
             {
                 CombatResult r = CombatUpdate(dt,
@@ -122,7 +132,10 @@ int main(void)
                 }
                 break;
             }
-            case GS_GAMEOVER: UpdateGameOver();  break;
+
+            case GS_GAMEOVER:
+                UpdateGameOver();
+                break;
         }
 
         BeginDrawing();
@@ -130,16 +143,23 @@ int main(void)
 
         switch (state)
         {
-            case GS_WORLD:    DrawWorld();    break;
-            case GS_COMBAT:   CombatDraw(player.health, player.maxHealth,
-                                         player.potions, player.score); break;
-            case GS_GAMEOVER: DrawGameOver(); break;
+            case GS_WORLD:
+                DrawWorld();
+                break;
+            case GS_COMBAT:
+                CombatDraw(player.health, player.maxHealth,
+                           player.potions, player.score);
+                break;
+            case GS_GAMEOVER:
+                DrawGameOver();
+                break;
         }
 
         EndDrawing();
     }
 
     CombatCleanup();
+    BackgroundsUnload();
     TerrainUnload();
     CloseWindow();
     return 0;
@@ -189,7 +209,7 @@ static void SpawnPotions(void)
 }
 
 /* ------------------------------------------------------------
- *  World
+ *  World update
  * ---------------------------------------------------------- */
 static void UpdateWorld(float dt)
 {
@@ -229,7 +249,8 @@ static void UpdateWorld(float dt)
 
     for (int i = 0; i < MAX_POTIONS_WORLD; i++)
     {
-        if (!potions[i].collected && Vector2Distance(player.position, potions[i].position) < POTION_COLLECT_RADIUS)
+        if (!potions[i].collected &&
+            Vector2Distance(player.position, potions[i].position) < POTION_COLLECT_RADIUS)
         {
             potions[i].collected = true;
             player.potions++;
@@ -259,6 +280,9 @@ static void UpdateWorld(float dt)
     camera.target.y = Clampf(camera.target.y, halfH, WORLD_HEIGHT - halfH);
 }
 
+/* ------------------------------------------------------------
+ *  World drawing
+ * ---------------------------------------------------------- */
 static void DrawPotion(Vector2 pos)
 {
     DrawCircleV(pos, POTION_RADIUS, RED);
@@ -278,15 +302,17 @@ static void DrawWorld(void)
         for (int i = 0; i < MAX_POTIONS_WORLD; i++)
             if (!potions[i].collected) DrawPotion(potions[i].position);
 
-        DrawCircleGradient(player.position, PLAYER_RADIUS,
-                            (Color){ 120, 175, 255, 255 }, (Color){ 40, 80, 200, 255 });
-        DrawCircleLines((int)player.position.x, (int)player.position.y, PLAYER_RADIUS, (Color){ 20, 40, 120, 255 });
+        /* Player knight in the exploration view */
+        {
+            bool facingRight = (cosf(player.facingAngle) >= 0.0f);
 
-        Vector2 tip = {
-            player.position.x + cosf(player.facingAngle) * (PLAYER_RADIUS + 8.0f),
-            player.position.y + sinf(player.facingAngle) * (PLAYER_RADIUS + 8.0f)
-        };
-        DrawLineEx(player.position, tip, 3.0f, (Color){ 20, 40, 120, 255 });
+            DrawEllipse((int)player.position.x,
+                        (int)(player.position.y + 18),
+                        14.0f, 5.0f, (Color){ 0, 0, 0, 100 });
+
+            CombatantPose pose = { 0.0f, worldTime };
+            CombatantDrawKnight(player.position, facingRight, pose);
+        }
 
     EndMode2D();
 }

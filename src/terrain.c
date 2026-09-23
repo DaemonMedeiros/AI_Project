@@ -6,10 +6,10 @@
 #include <math.h>
 #include <stdlib.h>
 
-static Vector2        pathSamples[MAX_PATH_SAMPLES];
-static int            pathSampleCount;
+static Vector2         pathSamples[MAX_PATH_SAMPLES];
+static int             pathSampleCount;
 static RenderTexture2D worldTexture;
-static bool           initialized;
+static bool            initialized;
 
 /* ---------------------------------------------------------- */
 static float LocalClampf(float v, float lo, float hi)
@@ -19,10 +19,7 @@ static float LocalClampf(float v, float lo, float hi)
     return v;
 }
 
-float TerrainClampf(float v, float lo, float hi)
-{
-    return LocalClampf(v, lo, hi);
-}
+float TerrainClampf(float v, float lo, float hi) { return LocalClampf(v, lo, hi); }
 
 /* ---------------------------------------------------------- */
 void TerrainInit(void)
@@ -68,9 +65,11 @@ void TerrainInit(void)
     BeginTextureMode(worldTexture);
         ClearBackground((Color){ 40, 70, 35, 255 });
 
+        /* Forest clumps */
         for (int c = 0; c < NUM_TREE_CLUSTERS; c++)
         {
-            Vector2 center = { (float)GetRandomValue(0, WORLD_WIDTH), (float)GetRandomValue(0, WORLD_HEIGHT) };
+            Vector2 center = { (float)GetRandomValue(0, WORLD_WIDTH),
+                               (float)GetRandomValue(0, WORLD_HEIGHT) };
             int   treeCount     = GetRandomValue(10, 22);
             float clusterRadius = (float)GetRandomValue(70, 170);
 
@@ -93,19 +92,23 @@ void TerrainInit(void)
             }
         }
 
+        /* Sparse solitary trees */
         for (int i = 0; i < NUM_SPARSE_TREES; i++)
         {
-            Vector2 pos = { (float)GetRandomValue(0, WORLD_WIDTH), (float)GetRandomValue(0, WORLD_HEIGHT) };
+            Vector2 pos = { (float)GetRandomValue(0, WORLD_WIDTH),
+                            (float)GetRandomValue(0, WORLD_HEIGHT) };
             float r = (float)GetRandomValue(10, 22);
             DrawCircleV(pos, r, (Color){ 28, 100, 36, 200 });
         }
 
+        /* Dirt path edge */
         for (int i = 0; i < pathSampleCount; i++)
         {
             float wobble = sinf((float)i * 0.18f) * 7.0f;
             float radius = PATH_BASE_RADIUS + wobble;
             DrawCircleV(pathSamples[i], radius + 14, (Color){ 150, 120, 70, 255 });
         }
+        /* Dirt path fill */
         for (int i = 0; i < pathSampleCount; i++)
         {
             float wobble = sinf((float)i * 0.18f) * 7.0f;
@@ -126,7 +129,6 @@ void TerrainUnload(void)
     }
 }
 
-/* ---------------------------------------------------------- */
 int TerrainGetPathSampleCount(void) { return pathSampleCount; }
 
 Vector2 TerrainGetPathSample(int index)
@@ -137,10 +139,7 @@ Vector2 TerrainGetPathSample(int index)
     return pathSamples[index];
 }
 
-Vector2 TerrainGetPathMidpoint(void)
-{
-    return TerrainGetPathSample(pathSampleCount / 2);
-}
+Vector2 TerrainGetPathMidpoint(void) { return TerrainGetPathSample(pathSampleCount / 2); }
 
 bool TerrainIsOnPath(Vector2 pos)
 {

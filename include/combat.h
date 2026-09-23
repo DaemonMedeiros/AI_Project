@@ -5,6 +5,7 @@
 #define COMBAT_H
 
 #include "raylib.h"
+#include "backgrounds.h"
 #include <stdbool.h>
 
 /* ---------- Tunables ---------- */
@@ -61,7 +62,7 @@ typedef enum {
 void  CombatInit(void);
 void  CombatCleanup(void);
 
-/* Begin a new encounter with a randomly chosen enemy */
+/* Begin a new encounter with a randomly chosen enemy + background */
 void  CombatStartEncounter(void);
 
 /* Update / draw. `playerHealth` etc. are passed by pointer so main owns the
@@ -78,9 +79,11 @@ void  CombatDraw(int playerHealth, int maxPlayerHealth,
 /* Friendly name of the active enemy (for logging / UI) */
 const char *CombatGetEnemyName(void);
 
+/* Background the current encounter is using */
+BackgroundType CombatGetBackground(void);
+
 /* ---------- Standalone spell VFX ----------
- * The combat module can also expose fireball / ice projectiles for other
- * systems to reuse. */
+ * Fireball / ice projectiles, exposed for reuse elsewhere. */
 void  CombatSpawnFireball(Vector2 origin, Vector2 target);
 void  CombatSpawnIceSpell(Vector2 origin, Vector2 target);
 void  CombatUpdateEffects(float dt);

@@ -1,21 +1,22 @@
 /* ============================================================
  * combat.c - Turn-based combat system with spell VFX
- *
- * Includes:
- *   - Turn / menu / damage resolution logic
- *   - Fireball VFX: randomized particles, fire trail, explosion
- *   - Ice spell VFX: crystalline shards, frost trail, shatter burst
  * ============================================================ */
 #include "../include/combat.h"
+#include "../include/backgrounds.h"
+#include "../include/combatants.h"
 #include "raymath.h"
+
 #include <stdio.h>
 #include <string.h>
 #include <math.h>
 #include <stdlib.h>
 
-/* ---------- Layout ---------- */
-static const Vector2 playerCombatPos = { 180, 380 };
-static const Vector2 enemyCombatPos  = { 600, 200 };
+/* ---------- Layout ----------
+ * Sprites are anchored near the bottom so their feet sit on the
+ * ground line of every background (ground starts around y=420-450
+ * in all six backdrops). */
+static const Vector2 playerCombatPos = { 200, 440 };
+static const Vector2 enemyCombatPos  = { 600, 440 };
 
 /* ---------- Enemy roster ---------- */
 static const char *enemyNames[NUM_ENEMY_TYPES]   = { "Slime", "Goblin", "Wolf", "Orc" };
@@ -38,6 +39,10 @@ static AfterMessage afterMessage;
 
 static CombatResult currentResult;
 
+static BackgroundType currentBackground = BG_FOREST_DAY;
+
+static float combatTime = 0.0f;
+
 /* ---------- Effect system ---------- */
 #define MAX_PARTICLES 512
 
@@ -51,7 +56,7 @@ typedef struct {
     ParticleType type;
     Vector2 pos;
     Vector2 vel;
-    float   life;      /* seconds remaining */
+    float   life;
     float   maxLife;
     float   size;
     float   rot;
@@ -62,13 +67,12 @@ typedef struct {
 
 static Particle particles[MAX_PARTICLES];
 
-/* Projectile animation for the standalone spells */
 typedef struct {
     bool    active;
-    bool    isIce;      /* false = fire */
+    bool    isIce;
     Vector2 origin;
     Vector2 target;
-    float   t;          /* 0..1 */
+    float   t;
     float   duration;
     bool    exploded;
     float   explodeTimer;
@@ -78,7 +82,6 @@ typedef struct {
 #define MAX_PROJECTILES 8
 static SpellProjectile projectiles[MAX_PROJECTILES];
 
-/* ---------- Utility ---------- */
 static int   ClampInt(int v, int lo, int hi){ if (v<lo) return lo; if (v>hi) return hi; return v; }
 static float RandRange(float lo, float hi){ return lo + (float)GetRandomValue(0, 10000) / 10000.0f * (hi - lo); }
 static float RandSym(float range){ return RandRange(-range, range); }
@@ -88,7 +91,6 @@ static Vector2 Lerp2(Vector2 a, Vector2 b, float t)
     return (Vector2){ a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t };
 }
 
-/* Allocate a free particle slot; returns index or -1 */
 static int AllocParticle(void)
 {
     for (int i = 0; i < MAX_PARTICLES; i++)
@@ -145,12 +147,10 @@ void CombatInit(void)
     combatMenu = CM_MAIN;
     menuSelection = 0;
     message[0] = '\0';
+    combatTime = 0.0f;
 }
 
-void CombatCleanup(void)
-{
-    CombatClearEffects();
-}
+void CombatCleanup(void) { CombatClearEffects(); }
 
 void CombatClearEffects(void)
 {
@@ -159,6 +159,7 @@ void CombatClearEffects(void)
 }
 
 const char *CombatGetEnemyName(void) { return enemy.name ? enemy.name : "?"; }
+BackgroundType CombatGetBackground(void) { return currentBackground; }
 
 /* ---------- Encounter setup ---------- */
 void CombatStartEncounter(void)
@@ -168,14 +169,16 @@ void CombatStartEncounter(void)
     enemy.maxHealth = enemyHealths[t];
     enemy.health    = enemyHealths[t];
 
+    currentBackground = BackgroundsPickRandom();
+
     phase = PHASE_MENU;
     combatMenu = CM_MAIN;
     menuSelection = 0;
     currentResult = COMBAT_RESULT_NONE;
     CombatClearEffects();
+    combatTime = 0.0f;
 }
 
-/* ---------- Message system ---------- */
 static void SetMessage(const char *text, AfterMessage after)
 {
     strncpy(message, text, sizeof(message) - 1);
@@ -190,7 +193,6 @@ static void SetMessage(const char *text, AfterMessage after)
  * ============================================================ */
 static void EmitFireTrail(Vector2 pos, float intensity)
 {
-    /* Core ember */
     int n = GetRandomValue(2, 4);
     for (int i = 0; i < n; i++)
     {
@@ -202,7 +204,6 @@ static void EmitFireTrail(Vector2 pos, float intensity)
                       RandRange(6.0f, 12.0f) * intensity,
                       start, end);
     }
-    /* Occasional smoke puff */
     if (GetRandomValue(0, 3) == 0)
     {
         Vector2 v = { RandSym(30.0f), RandSym(30.0f) - 20.0f };
@@ -216,7 +217,6 @@ static void EmitFireTrail(Vector2 pos, float intensity)
 
 static void EmitFireExplosion(Vector2 pos)
 {
-    /* Bright core flash */
     for (int i = 0; i < 12; i++)
     {
         float ang = RandRange(0, PI * 2.0f);
@@ -228,7 +228,6 @@ static void EmitFireExplosion(Vector2 pos)
                       (Color){ 255, 250, 200, 255 },
                       (Color){ 255, 80, 20, 0 });
     }
-    /* Mid-ring orange */
     for (int i = 0; i < 26; i++)
     {
         float ang = RandRange(0, PI * 2.0f);
@@ -240,7 +239,6 @@ static void EmitFireExplosion(Vector2 pos)
                       (Color){ 255, 170, 60, 255 },
                       (Color){ 180, 30, 10, 0 });
     }
-    /* Embers - small, long-lived, drift upward */
     for (int i = 0; i < 30; i++)
     {
         float ang = RandRange(0, PI * 2.0f);
@@ -252,7 +250,6 @@ static void EmitFireExplosion(Vector2 pos)
                       (Color){ 255, 230, 120, 255 },
                       (Color){ 200, 60, 0, 0 });
     }
-    /* Shockwave ring: particles with zero velocity but large size, expanding */
     for (int i = 0; i < 20; i++)
     {
         float ang = (float)i / 20.0f * PI * 2.0f;
@@ -270,7 +267,6 @@ static void EmitFireExplosion(Vector2 pos)
  * ============================================================ */
 static void EmitIceTrail(Vector2 pos, float intensity)
 {
-    /* Cool mist / snowflake specks */
     int n = GetRandomValue(2, 4);
     for (int i = 0; i < n; i++)
     {
@@ -282,7 +278,6 @@ static void EmitIceTrail(Vector2 pos, float intensity)
                       RandRange(4.0f, 9.0f) * intensity,
                       start, end);
     }
-    /* Occasional crystalline shard fragment */
     if (GetRandomValue(0, 2) == 0)
     {
         Vector2 v = { RandSym(70.0f), RandSym(70.0f) };
@@ -296,7 +291,6 @@ static void EmitIceTrail(Vector2 pos, float intensity)
 
 static void EmitIceExplosion(Vector2 pos)
 {
-    /* White-blue core flash */
     for (int i = 0; i < 10; i++)
     {
         float ang = RandRange(0, PI * 2.0f);
@@ -308,7 +302,6 @@ static void EmitIceExplosion(Vector2 pos)
                       (Color){ 255, 255, 255, 255 },
                       (Color){ 140, 200, 255, 0 });
     }
-    /* Crystal shards bursting outward */
     for (int i = 0; i < 32; i++)
     {
         float ang = RandRange(0, PI * 2.0f);
@@ -320,7 +313,6 @@ static void EmitIceExplosion(Vector2 pos)
                       (Color){ 240, 250, 255, 255 },
                       (Color){ 90, 150, 220, 0 });
     }
-    /* Frost mist - slow, expanding, pale */
     for (int i = 0; i < 24; i++)
     {
         float ang = RandRange(0, PI * 2.0f);
@@ -332,7 +324,6 @@ static void EmitIceExplosion(Vector2 pos)
                       (Color){ 200, 230, 255, 200 },
                       (Color){ 150, 200, 240, 0 });
     }
-    /* Shockwave ring */
     for (int i = 0; i < 22; i++)
     {
         float ang = (float)i / 22.0f * PI * 2.0f;
@@ -346,7 +337,7 @@ static void EmitIceExplosion(Vector2 pos)
 }
 
 /* ============================================================
- *  Standalone projectile spawning (also used by combat flow)
+ *  Standalone projectile spawning
  * ============================================================ */
 static int AllocProjectile(void)
 {
@@ -379,7 +370,6 @@ void CombatSpawnIceSpell(Vector2 origin, Vector2 target) { SpawnProjectile(origi
  * ============================================================ */
 void CombatUpdateEffects(float dt)
 {
-    /* Particles */
     for (int i = 0; i < MAX_PARTICLES; i++)
     {
         Particle *p = &particles[i];
@@ -388,14 +378,13 @@ void CombatUpdateEffects(float dt)
         p->life -= dt;
         if (p->life <= 0.0f) { p->active = false; continue; }
 
-        /* Per-type motion */
         switch (p->type)
         {
             case PT_FIRE_TRAIL:
             case PT_FIRE_BURST:
                 p->vel.x *= (1.0f - 2.5f * dt);
                 p->vel.y *= (1.0f - 2.5f * dt);
-                p->vel.y -= 30.0f * dt;   /* rise */
+                p->vel.y -= 30.0f * dt;
                 break;
             case PT_FIRE_EMBER:
                 p->vel.x *= (1.0f - 1.2f * dt);
@@ -409,7 +398,7 @@ void CombatUpdateEffects(float dt)
             case PT_ICE_SHARD:
                 p->vel.x *= (1.0f - 1.5f * dt);
                 p->vel.y *= (1.0f - 1.5f * dt);
-                p->vel.y += 120.0f * dt;  /* gravity - shards fall */
+                p->vel.y += 120.0f * dt;
                 break;
             case PT_ICE_MIST:
                 p->vel.x *= (1.0f - 1.8f * dt);
@@ -423,7 +412,6 @@ void CombatUpdateEffects(float dt)
         p->rot   += p->rotSpeed * dt;
     }
 
-    /* Projectiles: emit trail particles while traveling, explode on impact */
     for (int i = 0; i < MAX_PROJECTILES; i++)
     {
         SpellProjectile *p = &projectiles[i];
@@ -433,7 +421,6 @@ void CombatUpdateEffects(float dt)
         {
             p->t += dt / p->duration;
 
-            /* Per-frame trail emission */
             Vector2 pos = Lerp2(p->origin, p->target, p->t);
             if (p->isIce) EmitIceTrail(pos, 1.0f);
             else          EmitFireTrail(pos, 1.0f);
@@ -460,7 +447,7 @@ void CombatUpdateEffects(float dt)
  * ============================================================ */
 static void DrawParticle(const Particle *p)
 {
-    float t = 1.0f - (p->life / p->maxLife);   /* 0 fresh -> 1 dead */
+    float t = 1.0f - (p->life / p->maxLife);
     Color c = LerpColor(p->colStart, p->colEnd, t);
     float size = p->size * (1.0f - t * 0.7f);
 
@@ -487,15 +474,13 @@ static void DrawParticle(const Particle *p)
 
         case PT_ICE_SHARD:
         {
-            /* Diamond-shaped shard */
             float s = size;
             Vector2 pts[4] = {
-                { p->pos.x,             p->pos.y - s        },
-                { p->pos.x + s * 0.6f,  p->pos.y            },
-                { p->pos.x,             p->pos.y + s        },
-                { p->pos.x - s * 0.6f,  p->pos.y            }
+                { p->pos.x,            p->pos.y - s        },
+                { p->pos.x + s * 0.6f, p->pos.y            },
+                { p->pos.x,            p->pos.y + s        },
+                { p->pos.x - s * 0.6f, p->pos.y            }
             };
-            /* Slight rotation via manual transform */
             float cs = cosf(p->rot), sn = sinf(p->rot);
             for (int k = 0; k < 4; k++)
             {
@@ -525,7 +510,6 @@ void CombatDrawEffects(void)
     for (int i = 0; i < MAX_PARTICLES; i++)
         if (particles[i].active) DrawParticle(&particles[i]);
 
-    /* Projectile cores drawn on top of their trails */
     for (int i = 0; i < MAX_PROJECTILES; i++)
     {
         SpellProjectile *p = &projectiles[i];
@@ -535,13 +519,11 @@ void CombatDrawEffects(void)
 
         if (p->isIce)
         {
-            /* Cool layered glow */
             BeginBlendMode(BLEND_ADDITIVE);
             DrawCircleV(pos, 18, (Color){ 120, 180, 255, 90 });
             DrawCircleV(pos, 12, (Color){ 180, 230, 255, 180 });
             DrawCircleV(pos,  7, (Color){ 255, 255, 255, 255 });
             EndBlendMode();
-            /* Rotating crystalline shards around core */
             for (int k = 0; k < 4; k++)
             {
                 float a = p->jitterSeed + (float)k * PI * 0.5f + p->t * 8.0f;
@@ -551,7 +533,6 @@ void CombatDrawEffects(void)
         }
         else
         {
-            /* Flickering fire core */
             float flicker = 1.0f + sinf((p->t * 40.0f) + p->jitterSeed) * 0.08f;
             BeginBlendMode(BLEND_ADDITIVE);
             DrawCircleV(pos, 22 * flicker, (Color){ 255, 90, 30, 70 });
@@ -600,7 +581,7 @@ static void ResolveAnimation(int *playerHealth, int *playerPotions,
             SetMessage(buf, AFTER_ENEMY_TURN);
         }
     }
-    else /* ACTOR_ENEMY */
+    else
     {
         *playerHealth = ClampInt(*playerHealth - pendingDamage, 0, PLAYER_MAX_HP);
 
@@ -638,6 +619,7 @@ CombatResult CombatUpdate(float dt,
                           int *playerHealth, int *playerPotions,
                           int *playerScore, int *playerExp)
 {
+    combatTime += dt;
     CombatUpdateEffects(dt);
 
     switch (phase)
@@ -651,21 +633,15 @@ CombatResult CombatUpdate(float dt,
 
                 if (IsKeyPressed(KEY_ENTER) || IsKeyPressed(KEY_SPACE))
                 {
-                    if (menuSelection == 0) /* Attack */
+                    if (menuSelection == 0)
                     {
                         animType = ANIM_ATTACK; animActor = ACTOR_PLAYER;
                         pendingDamage = PLAYER_ATTACK_DMG; animTimer = 0.0f;
                         phase = PHASE_ANIM;
                     }
-                    else if (menuSelection == 1) /* Spell */
-                    {
-                        combatMenu = CM_SPELL; menuSelection = 0;
-                    }
-                    else if (menuSelection == 2) /* Items */
-                    {
-                        combatMenu = CM_ITEM; menuSelection = 0;
-                    }
-                    else /* Flee */
+                    else if (menuSelection == 1) { combatMenu = CM_SPELL; menuSelection = 0; }
+                    else if (menuSelection == 2) { combatMenu = CM_ITEM;  menuSelection = 0; }
+                    else
                     {
                         if (GetRandomValue(1, 100) <= FLEE_SUCCESS_CHANCE)
                             SetMessage("You fled from battle!", AFTER_RETURN_WORLD);
@@ -676,37 +652,33 @@ CombatResult CombatUpdate(float dt,
             }
             else if (combatMenu == CM_SPELL)
             {
-                /* Options: Fireball / Ice Shard / Back */
                 if (IsKeyPressed(KEY_DOWN) || IsKeyPressed(KEY_S)) menuSelection = (menuSelection + 1) % 3;
                 if (IsKeyPressed(KEY_UP)   || IsKeyPressed(KEY_W)) menuSelection = (menuSelection + 2) % 3;
 
                 if (IsKeyPressed(KEY_ENTER) || IsKeyPressed(KEY_SPACE))
                 {
-                    if (menuSelection == 0) /* Fireball */
+                    if (menuSelection == 0)
                     {
                         animType = ANIM_SPELL_FIRE; animActor = ACTOR_PLAYER;
                         pendingDamage = PLAYER_SPELL_DMG; animTimer = 0.0f;
                         CombatSpawnFireball(playerCombatPos, enemyCombatPos);
                         phase = PHASE_ANIM;
                     }
-                    else if (menuSelection == 1) /* Ice Shard */
+                    else if (menuSelection == 1)
                     {
                         animType = ANIM_SPELL_ICE; animActor = ACTOR_PLAYER;
                         pendingDamage = PLAYER_SPELL_DMG; animTimer = 0.0f;
                         CombatSpawnIceSpell(playerCombatPos, enemyCombatPos);
                         phase = PHASE_ANIM;
                     }
-                    else /* Back */
-                    {
-                        combatMenu = CM_MAIN; menuSelection = 0;
-                    }
+                    else { combatMenu = CM_MAIN; menuSelection = 0; }
                 }
                 if (IsKeyPressed(KEY_BACKSPACE) || IsKeyPressed(KEY_ESCAPE))
                 {
                     combatMenu = CM_MAIN; menuSelection = 0;
                 }
             }
-            else /* CM_ITEM */
+            else
             {
                 if (IsKeyPressed(KEY_DOWN) || IsKeyPressed(KEY_S) ||
                     IsKeyPressed(KEY_UP)   || IsKeyPressed(KEY_W))
@@ -714,7 +686,7 @@ CombatResult CombatUpdate(float dt,
 
                 if (IsKeyPressed(KEY_ENTER) || IsKeyPressed(KEY_SPACE))
                 {
-                    if (menuSelection == 0) /* Health Potion */
+                    if (menuSelection == 0)
                     {
                         if (*playerPotions > 0)
                         {
@@ -727,10 +699,7 @@ CombatResult CombatUpdate(float dt,
                             SetMessage("You don't have any potions!", AFTER_BACK_TO_MENU);
                         }
                     }
-                    else
-                    {
-                        combatMenu = CM_MAIN; menuSelection = 0;
-                    }
+                    else { combatMenu = CM_MAIN; menuSelection = 0; }
                 }
                 if (IsKeyPressed(KEY_BACKSPACE) || IsKeyPressed(KEY_ESCAPE))
                 {
@@ -788,40 +757,72 @@ static void DrawCombatAnimation(void)
         float wave = (t < 0.5f) ? (t * 2.0f) : ((1.0f - t) * 2.0f);
         Vector2 mid = Lerp2(origin, target, 0.35f);
         Vector2 pos = Lerp2(origin, mid, wave);
-        DrawLineEx(origin, pos, 4, DARKGRAY);
-        DrawCircleV(pos, 8, GRAY);
+        BeginBlendMode(BLEND_ADDITIVE);
+        DrawCircleV(pos, 8.0f, (Color){ 255, 240, 200, 180 });
+        DrawCircleV(pos, 4.0f, (Color){ 255, 255, 255, 255 });
+        EndBlendMode();
     }
-    /* Spell animation is handled by CombatDrawEffects() */
 }
 
 void CombatDraw(int playerHealth, int maxPlayerHealth,
                 int playerPotions, int playerScore)
 {
-    ClearBackground((Color){ 25, 25, 40, 255 });
+    /* ---------- Background: seamless, no darkening overlay ---------- */
+    BackgroundsDraw(currentBackground);
 
+    /* ---------- HUD text ---------- */
     DrawText(TextFormat("Score: %d", playerScore), 20, 20, 20, YELLOW);
+    DrawText(BackgroundsGetName(currentBackground), 20, 44, 14,
+             (Color){ 220, 220, 220, 220 });
 
-    /* Combatant markers */
-    DrawRectangle((int)playerCombatPos.x - 20, (int)playerCombatPos.y - 20, 40, 40, (Color){ 60, 120, 230, 255 });
-    DrawRectangleLines((int)playerCombatPos.x - 20, (int)playerCombatPos.y - 20, 40, 40, BLACK);
+    /* ---------- Combatant sprites ---------- */
+    {
+        float lungeT = 0.0f;
+        if (phase == PHASE_ANIM)
+        {
+            float t = animTimer / ANIM_DURATION;
+            if (t > 1.0f) t = 1.0f;
+            lungeT = (t < 0.5f) ? (t * 2.0f) : ((1.0f - t) * 2.0f);
+        }
 
-    DrawRectangle((int)enemyCombatPos.x - 20, (int)enemyCombatPos.y - 20, 40, 40, (Color){ 200, 60, 60, 255 });
-    DrawRectangleLines((int)enemyCombatPos.x - 20, (int)enemyCombatPos.y - 20, 40, 40, BLACK);
-    DrawText(enemy.name, (int)enemyCombatPos.x - 30, (int)enemyCombatPos.y + 30, 18, WHITE);
+        CombatantPose playerPose = {
+            (animActor == ACTOR_PLAYER && phase == PHASE_ANIM) ? lungeT : 0.0f,
+            combatTime
+        };
+        CombatantPose enemyPose = {
+            (animActor == ACTOR_ENEMY && phase == PHASE_ANIM) ? lungeT : 0.0f,
+            combatTime + 0.7f
+        };
 
-    DrawHealthBar(80, 460, 220, playerHealth, maxPlayerHealth, "Player");
-    DrawHealthBar(500, 100, 220, enemy.health, enemy.maxHealth, "Enemy");
+        CombatantDrawKnight(playerCombatPos, true,  playerPose);
+        CombatantDrawEnemy(enemy.name, enemyCombatPos, false, enemyPose);
+    }
 
-    /* Basic attack animation (spells handled by effects layer) */
+    /* ---------- Health bars: level, along the bottom ---------- */
+    {
+        const int barW = 300;
+        const int barH = 18;
+        const int barY = 600 - 40;             /* 40px from bottom edge */
+        const int gap  = 40;
+
+        int totalW = barW * 2 + gap;
+        int startX = (800 - totalW) / 2;
+
+        DrawHealthBar(startX,             barY, barW,
+                      playerHealth, maxPlayerHealth, "Player");
+        DrawHealthBar(startX + barW + gap, barY, barW,
+                      enemy.health, enemy.maxHealth, "Enemy");
+    }
+
+    /* ---------- Effects ---------- */
     if (phase == PHASE_ANIM && animType == ANIM_ATTACK)
         DrawCombatAnimation();
 
-    /* Spell / particle effects (drawn above combatants) */
     CombatDrawEffects();
 
+    /* ---------- Menus: centered, width hugs the text ---------- */
     if (phase == PHASE_MENU)
     {
-        int mx = 60, my = 500, lineH = 26;
         const char *mainOptions[4]  = { "Attack", "Spell", "Items", "Flee" };
         const char *spellOptions[3] = { "Fireball", "Ice Shard", "Back" };
         const char *itemOptions[2]  = { TextFormat("Health Potion (x%d)", playerPotions), "Back" };
@@ -831,20 +832,53 @@ void CombatDraw(int playerHealth, int maxPlayerHealth,
         if (combatMenu == CM_SPELL) { options = spellOptions; count = 3; }
         if (combatMenu == CM_ITEM)  { options = itemOptions;  count = 2; }
 
-        DrawRectangle(mx - 10, my - 10, 300, lineH * count + 20, (Color){ 0, 0, 0, 160 });
+        const int fontSize = 20;
+        const int lineH    = 28;
+        const int padX     = 18;
+        const int padY     = 14;
+        const int prefixW  = MeasureText("> ", fontSize);
+
+        /* Width = widest option (plus the "> " prefix) + padding */
+        int maxTextW = 0;
+        for (int i = 0; i < count; i++)
+        {
+            int w = MeasureText(options[i], fontSize);
+            if (w > maxTextW) maxTextW = w;
+        }
+
+        int boxW = prefixW + maxTextW + padX * 2;
+        int boxH = lineH * count + padY * 2;
+        int boxX = (800 - boxW) / 2;
+        int boxY = (600 - boxH) / 2;
+
+        DrawRectangle(boxX, boxY, boxW, boxH, (Color){ 0, 0, 0, 190 });
+        DrawRectangleLines(boxX, boxY, boxW, boxH, (Color){ 220, 220, 220, 200 });
+
         for (int i = 0; i < count; i++)
         {
             Color c = (i == menuSelection) ? YELLOW : WHITE;
-            DrawText(TextFormat("%s%s", (i == menuSelection) ? "> " : "  ", options[i]), mx, my + i * lineH, 20, c);
+            const char *prefix = (i == menuSelection) ? "> " : "  ";
+            DrawText(TextFormat("%s%s", prefix, options[i]),
+                     boxX + padX, boxY + padY + i * lineH, fontSize, c);
         }
     }
 
+    /* ---------- Message box ---------- */
     if (phase == PHASE_MESSAGE)
     {
-        int boxW = 600, boxH = 60;
-        int bx = (800 - boxW) / 2, by = 600 - 100;
-        DrawRectangle(bx, by, boxW, boxH, (Color){ 0, 0, 0, 200 });
+        const int fontSize = 20;
+        int textW = MeasureText(message, fontSize);
+        int boxW  = textW + 60;
+        if (boxW < 300) boxW = 300;
+        if (boxW > 760) boxW = 760;
+
+        int boxH = 56;
+        int bx = (800 - boxW) / 2;
+        int by = 600 - 90;
+
+        DrawRectangle(bx, by, boxW, boxH, (Color){ 0, 0, 0, 210 });
         DrawRectangleLines(bx, by, boxW, boxH, WHITE);
-        DrawText(message, bx + 20, by + 20, 20, WHITE);
+        DrawText(message, bx + (boxW - textW) / 2, by + (boxH - fontSize) / 2,
+                 fontSize, WHITE);
     }
 }

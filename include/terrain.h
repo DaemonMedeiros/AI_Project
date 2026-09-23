@@ -34,7 +34,7 @@ bool       TerrainIsOnPath(Vector2 pos);
 /* Drawing: draws the baked terrain inside the currently active 2D camera */
 void       TerrainDraw(void);
 
-/* Internal helpers exported for spawn logic */
+/* Internal helper exported for spawn logic */
 float      TerrainClampf(float v, float lo, float hi);
 
 #endif /* TERRAIN_H */
