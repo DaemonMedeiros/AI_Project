@@ -1,29 +1,37 @@
 /* ============================================================
  * main.c - Simple Turn-Based Fantasy RPG
  *
- * A small top-down 2D RPG built with C and raylib, implementing
- * the accompanying game design document: grid exploration with
- * random forest encounters, potion collection, and turn-based
- * combat (Attack / Spell / Items / Flee) against a randomly
- * chosen enemy with simple attack/spell AI.
+ * A small 2D RPG built with C and raylib: physics-based
+ * exploration over a large, organically-painted forest with a
+ * winding dirt path, plus turn-based combat (Attack / Spell /
+ * Items / Flee) against a randomly chosen enemy.
+ *
+ * The world terrain (forest + path) is generated once at
+ * startup and baked into an off-screen texture, since no
+ * external art assets are available in this build - all
+ * "sprites" are procedurally drawn, anti-aliased raylib shapes
+ * rather than bitmap images.
  *
  * Drop this file into src/ of the portable raylib project and
  * build with the existing Makefile (make / make run).
  * ============================================================ */
 
 #include "raylib.h"
+#include "raymath.h"
 #include <stdbool.h>
 #include <stdio.h>
 #include <string.h>
+#include <math.h>
 
 /* ------------------------------------------------------------
  *  Constants
  * ---------------------------------------------------------- */
 #define SCREEN_WIDTH   800
 #define SCREEN_HEIGHT  600
-#define TILE_SIZE      40
-#define MAP_COLS       (SCREEN_WIDTH  / TILE_SIZE)   /* 20 */
-#define MAP_ROWS       (SCREEN_HEIGHT / TILE_SIZE)   /* 15 */
+
+#define WORLD_SCALE    4
+#define WORLD_WIDTH    (SCREEN_WIDTH  * WORLD_SCALE)   /* 3200 */
+#define WORLD_HEIGHT   (SCREEN_HEIGHT * WORLD_SCALE)   /* 2400 */
 
 #define MAX_POTIONS_WORLD   6
 #define STARTING_POTIONS    3
@@ -37,19 +45,39 @@
 #define FLEE_SUCCESS_CHANCE  50   /* percent */
 #define EXP_PER_KILL         15
 
-#define ENCOUNTER_CHANCE     15   /* percent, rolled per step onto a forest tile */
-#define MOVE_REPEAT_DELAY    0.15f /* seconds between steps while a direction is held */
+#define ENCOUNTER_CHANCE           15    /* percent, rolled periodically while walking in forest */
+#define ENCOUNTER_CHECK_INTERVAL   0.35f /* seconds between encounter rolls */
 
 #define ANIM_DURATION        0.6f
 #define MESSAGE_DURATION     1.6f
 
 #define NUM_ENEMY_TYPES 4
 
+/* Player physics */
+#define PLAYER_RADIUS       14.0f
+#define PLAYER_MAX_SPEED    220.0f  /* px/sec */
+#define PLAYER_ACCEL        900.0f  /* px/sec^2, ramps up to top speed */
+#define PLAYER_DECEL        1400.0f /* px/sec^2, brakes to a stop when input releases */
+
+/* Camera */
+#define CAMERA_FOLLOW_SPEED 8.0f    /* higher = camera catches up to the player faster */
+
+/* Terrain generation */
+#define PATH_CONTROL_POINTS       9
+#define PATH_SAMPLES_PER_SEGMENT  40
+#define MAX_PATH_SAMPLES          ((PATH_CONTROL_POINTS) * (PATH_SAMPLES_PER_SEGMENT) + 8)
+#define PATH_BASE_RADIUS          46.0f  /* average half-width of the walkable dirt path */
+#define PATH_HALF_WIDTH           48.0f  /* used for forest-vs-path terrain checks */
+#define NUM_TREE_CLUSTERS         55
+#define NUM_SPARSE_TREES          260
+
+/* Potions */
+#define POTION_RADIUS         8.0f
+#define POTION_COLLECT_RADIUS 20.0f
+
 /* ------------------------------------------------------------
  *  Types
  * ---------------------------------------------------------- */
-typedef enum { TILE_FOREST, TILE_PATH } TileType;
-
 typedef enum { GS_WORLD, GS_COMBAT, GS_GAMEOVER } GameState;
 
 typedef enum { CM_MAIN, CM_SPELL, CM_ITEM } CombatMenu;
@@ -69,7 +97,9 @@ typedef enum {
 } AfterMessage;
 
 typedef struct {
-    int gridX, gridY;
+    Vector2 position;
+    Vector2 velocity;
+    float   facingAngle;
     int maxHealth, health;
     int exp;
     int score;
@@ -82,15 +112,14 @@ typedef struct {
 } Enemy;
 
 typedef struct {
-    int gridX, gridY;
-    bool collected;
+    Vector2 position;
+    bool    collected;
 } Potion;
 
 /* ------------------------------------------------------------
  *  Global game state
  * ---------------------------------------------------------- */
-static TileType map[MAP_ROWS][MAP_COLS];
-static Potion   potions[MAX_POTIONS_WORLD];
+static Potion potions[MAX_POTIONS_WORLD];
 
 static Player player;
 static Enemy  enemy;
@@ -109,7 +138,7 @@ static char         message[160];
 static float        messageTimer;
 static AfterMessage afterMessage;
 
-static float moveTimer;
+static float encounterCooldown;
 
 static const char *enemyNames[NUM_ENEMY_TYPES]   = { "Slime", "Goblin", "Wolf", "Orc" };
 static const int   enemyHealths[NUM_ENEMY_TYPES] = { 15, 22, 28, 36 };
@@ -118,13 +147,21 @@ static const int   enemyHealths[NUM_ENEMY_TYPES] = { 15, 22, 28, 36 };
 static const Vector2 playerCombatPos = { 180, 380 };
 static const Vector2 enemyCombatPos  = { 600, 200 };
 
+/* Terrain */
+static Vector2 pathSamples[MAX_PATH_SAMPLES];
+static int     pathSampleCount;
+static RenderTexture2D worldTexture;
+static Camera2D camera;
+
 /* ------------------------------------------------------------
  *  Forward declarations
  * ---------------------------------------------------------- */
 static void ResetGame(void);
-static void GenerateMap(void);
+static void GenerateWorld(void);
 static void SpawnPotions(void);
-static int  Clamp(int v, int lo, int hi);
+static bool IsOnPath(Vector2 pos);
+static int  ClampInt(int v, int lo, int hi);
+static float Clampf(float v, float lo, float hi);
 
 static void UpdateWorld(float dt);
 static void DrawWorld(void);
@@ -148,6 +185,7 @@ int main(void)
     InitWindow(SCREEN_WIDTH, SCREEN_HEIGHT, "Simple Turn-Based Fantasy RPG");
     SetTargetFPS(60);
 
+    GenerateWorld();
     ResetGame();
 
     while (!WindowShouldClose())
@@ -174,6 +212,7 @@ int main(void)
         EndDrawing();
     }
 
+    UnloadRenderTexture(worldTexture);
     CloseWindow();
     return 0;
 }
@@ -183,56 +222,155 @@ int main(void)
  * ---------------------------------------------------------- */
 static void ResetGame(void)
 {
-    GenerateMap();
     SpawnPotions();
 
-    player.gridX     = MAP_COLS / 2;
-    player.gridY     = MAP_ROWS / 2;
+    /* Spawn on the path itself so the player starts in a safe spot */
+    player.position    = pathSamples[pathSampleCount / 2];
+    player.velocity     = (Vector2){ 0.0f, 0.0f };
+    player.facingAngle  = -PI / 2.0f;
     player.maxHealth = PLAYER_MAX_HP;
     player.health    = PLAYER_MAX_HP;
     player.exp       = 0;
     player.score     = 0;
     player.potions   = STARTING_POTIONS;
 
-    moveTimer = 0.0f;
+    encounterCooldown = ENCOUNTER_CHECK_INTERVAL;
+
+    camera.target   = player.position;
+    camera.offset   = (Vector2){ SCREEN_WIDTH / 2.0f, SCREEN_HEIGHT / 2.0f };
+    camera.rotation = 0.0f;
+    camera.zoom     = 1.0f;
+
     state = GS_WORLD;
 }
 
-/* Border + a crossroad of path tiles; everything else is forest. */
-static void GenerateMap(void)
+/* Builds a winding Catmull-Rom path across the world, then bakes the whole
+ * terrain (irregular forest clumps + the path cut through them) into a
+ * single off-screen texture so it only has to be drawn once, ever. */
+static void GenerateWorld(void)
 {
-    for (int y = 0; y < MAP_ROWS; y++)
+    Vector2 control[PATH_CONTROL_POINTS];
+    float stepX = (float)WORLD_WIDTH / (float)(PATH_CONTROL_POINTS - 1);
+    float y = WORLD_HEIGHT * 0.5f;
+
+    for (int i = 0; i < PATH_CONTROL_POINTS; i++)
     {
-        for (int x = 0; x < MAP_COLS; x++)
+        control[i].x = i * stepX;
+        if (i > 0)
         {
-            bool isBorder    = (x == 0 || y == 0 || x == MAP_COLS - 1 || y == MAP_ROWS - 1);
-            bool isCrossroad = (x == MAP_COLS / 2 || y == MAP_ROWS / 2);
-            map[y][x] = (isBorder || isCrossroad) ? TILE_PATH : TILE_FOREST;
+            y += (float)GetRandomValue(-260, 260);
+            float margin = WORLD_HEIGHT * 0.15f;
+            y = Clampf(y, margin, WORLD_HEIGHT - margin);
+        }
+        control[i].y = y;
+    }
+
+    pathSampleCount = 0;
+    for (int i = 0; i < PATH_CONTROL_POINTS - 1; i++)
+    {
+        Vector2 p0 = control[(i - 1 < 0) ? 0 : i - 1];
+        Vector2 p1 = control[i];
+        Vector2 p2 = control[i + 1];
+        Vector2 p3 = control[(i + 2 >= PATH_CONTROL_POINTS) ? PATH_CONTROL_POINTS - 1 : i + 2];
+
+        for (int s = 0; s < PATH_SAMPLES_PER_SEGMENT; s++)
+        {
+            float t = (float)s / (float)PATH_SAMPLES_PER_SEGMENT;
+            if (pathSampleCount < MAX_PATH_SAMPLES)
+                pathSamples[pathSampleCount++] = GetSplinePointCatmullRom(p0, p1, p2, p3, t);
         }
     }
+    if (pathSampleCount < MAX_PATH_SAMPLES) pathSamples[pathSampleCount++] = control[PATH_CONTROL_POINTS - 1];
+
+    worldTexture = LoadRenderTexture(WORLD_WIDTH, WORLD_HEIGHT);
+
+    BeginTextureMode(worldTexture);
+        ClearBackground((Color){ 40, 70, 35, 255 }); /* base undergrowth */
+
+        /* Irregular forest clumps: overlapping circles of varied size/shade,
+         * randomly scattered so density and clump shape are never uniform. */
+        for (int c = 0; c < NUM_TREE_CLUSTERS; c++)
+        {
+            Vector2 center = { (float)GetRandomValue(0, WORLD_WIDTH), (float)GetRandomValue(0, WORLD_HEIGHT) };
+            int   treeCount     = GetRandomValue(10, 22);
+            float clusterRadius = (float)GetRandomValue(70, 170);
+
+            for (int t = 0; t < treeCount; t++)
+            {
+                float ang  = (float)GetRandomValue(0, 360) * DEG2RAD;
+                float dist = (float)GetRandomValue(0, (int)clusterRadius);
+                Vector2 pos = { center.x + cosf(ang) * dist, center.y + sinf(ang) * dist };
+                float r = (float)GetRandomValue(14, 34);
+
+                Color col;
+                switch (GetRandomValue(0, 3))
+                {
+                    case 0:  col = (Color){ 24, 90, 32, 235 };  break;
+                    case 1:  col = (Color){ 30, 110, 40, 220 }; break;
+                    case 2:  col = (Color){ 20, 75, 28, 245 };  break;
+                    default: col = (Color){ 40, 125, 48, 210 }; break;
+                }
+                DrawCircleV(pos, r, col);
+            }
+        }
+
+        /* Sparse solitary trees so gaps between clusters don't look empty/flat */
+        for (int i = 0; i < NUM_SPARSE_TREES; i++)
+        {
+            Vector2 pos = { (float)GetRandomValue(0, WORLD_WIDTH), (float)GetRandomValue(0, WORLD_HEIGHT) };
+            float r = (float)GetRandomValue(10, 22);
+            DrawCircleV(pos, r, (Color){ 28, 100, 36, 200 });
+        }
+
+        /* Winding dirt path, drawn last so it cuts a clean curved swath
+         * through the forest instead of looking grid-aligned. */
+        for (int i = 0; i < pathSampleCount; i++)
+        {
+            float wobble = sinf((float)i * 0.18f) * 7.0f;
+            float radius = PATH_BASE_RADIUS + wobble;
+            DrawCircleV(pathSamples[i], radius + 14, (Color){ 150, 120, 70, 255 }); /* dirt edge/shadow */
+        }
+        for (int i = 0; i < pathSampleCount; i++)
+        {
+            float wobble = sinf((float)i * 0.18f) * 7.0f;
+            float radius = PATH_BASE_RADIUS + wobble;
+            DrawCircleV(pathSamples[i], radius, (Color){ 198, 170, 112, 255 }); /* path fill */
+        }
+    EndTextureMode();
+}
+
+static bool IsOnPath(Vector2 pos)
+{
+    for (int i = 0; i < pathSampleCount; i++)
+        if (Vector2Distance(pos, pathSamples[i]) < PATH_HALF_WIDTH) return true;
+    return false;
 }
 
 static void SpawnPotions(void)
 {
-    int startX = MAP_COLS / 2;
-    int startY = MAP_ROWS / 2;
-
     for (int i = 0; i < MAX_POTIONS_WORLD; i++)
     {
-        int x = startX, y = startY, attempts = 0;
+        Vector2 pos = { 0 };
+        int attempts = 0;
         do {
-            x = GetRandomValue(1, MAP_COLS - 2);
-            y = GetRandomValue(1, MAP_ROWS - 2);
+            pos.x = (float)GetRandomValue(80, WORLD_WIDTH - 80);
+            pos.y = (float)GetRandomValue(80, WORLD_HEIGHT - 80);
             attempts++;
-        } while ((map[y][x] != TILE_FOREST || (x == startX && y == startY)) && attempts < 200);
+        } while (IsOnPath(pos) && attempts < 300);
 
-        potions[i].gridX = x;
-        potions[i].gridY = y;
+        potions[i].position  = pos;
         potions[i].collected = false;
     }
 }
 
-static int Clamp(int v, int lo, int hi)
+static int ClampInt(int v, int lo, int hi)
+{
+    if (v < lo) return lo;
+    if (v > hi) return hi;
+    return v;
+}
+
+static float Clampf(float v, float lo, float hi)
 {
     if (v < lo) return lo;
     if (v > hi) return hi;
@@ -244,71 +382,107 @@ static int Clamp(int v, int lo, int hi)
  * ---------------------------------------------------------- */
 static void UpdateWorld(float dt)
 {
-    moveTimer -= dt;
+    Vector2 inputDir = { 0.0f, 0.0f };
+    if (IsKeyDown(KEY_UP)    || IsKeyDown(KEY_W)) inputDir.y -= 1.0f;
+    if (IsKeyDown(KEY_DOWN)  || IsKeyDown(KEY_S)) inputDir.y += 1.0f;
+    if (IsKeyDown(KEY_LEFT)  || IsKeyDown(KEY_A)) inputDir.x -= 1.0f;
+    if (IsKeyDown(KEY_RIGHT) || IsKeyDown(KEY_D)) inputDir.x += 1.0f;
 
-    int dx = 0, dy = 0;
-    if (IsKeyDown(KEY_UP)    || IsKeyDown(KEY_W)) dy = -1;
-    else if (IsKeyDown(KEY_DOWN)  || IsKeyDown(KEY_S)) dy = 1;
-    else if (IsKeyDown(KEY_LEFT)  || IsKeyDown(KEY_A)) dx = -1;
-    else if (IsKeyDown(KEY_RIGHT) || IsKeyDown(KEY_D)) dx = 1;
+    bool hasInput = (inputDir.x != 0.0f || inputDir.y != 0.0f);
 
-    if ((dx != 0 || dy != 0) && moveTimer <= 0.0f)
+    if (hasInput)
     {
-        int newX = Clamp(player.gridX + dx, 0, MAP_COLS - 1);
-        int newY = Clamp(player.gridY + dy, 0, MAP_ROWS - 1);
+        inputDir = Vector2Normalize(inputDir);
+        player.facingAngle = atan2f(inputDir.y, inputDir.x);
 
-        if (newX != player.gridX || newY != player.gridY)
+        /* Accelerate toward top speed in the input direction */
+        player.velocity = Vector2Add(player.velocity, Vector2Scale(inputDir, PLAYER_ACCEL * dt));
+        float speed = Vector2Length(player.velocity);
+        if (speed > PLAYER_MAX_SPEED)
+            player.velocity = Vector2Scale(Vector2Normalize(player.velocity), PLAYER_MAX_SPEED);
+    }
+    else
+    {
+        /* No input: decelerate to a stop rather than halting instantly */
+        float speed = Vector2Length(player.velocity);
+        if (speed > 0.0001f)
         {
-            player.gridX = newX;
-            player.gridY = newY;
-            moveTimer = MOVE_REPEAT_DELAY;
+            float newSpeed = speed - PLAYER_DECEL * dt;
+            if (newSpeed < 0.0f) newSpeed = 0.0f;
+            player.velocity = Vector2Scale(player.velocity, newSpeed / speed);
+        }
+        else player.velocity = (Vector2){ 0.0f, 0.0f };
+    }
 
-            /* Collect a potion if standing on one */
-            for (int i = 0; i < MAX_POTIONS_WORLD; i++)
-            {
-                if (!potions[i].collected && potions[i].gridX == newX && potions[i].gridY == newY)
-                {
-                    potions[i].collected = true;
-                    player.potions++;
-                }
-            }
+    player.position = Vector2Add(player.position, Vector2Scale(player.velocity, dt));
+    player.position.x = Clampf(player.position.x, PLAYER_RADIUS, WORLD_WIDTH  - PLAYER_RADIUS);
+    player.position.y = Clampf(player.position.y, PLAYER_RADIUS, WORLD_HEIGHT - PLAYER_RADIUS);
 
-            /* Random encounter, forest tiles only */
-            if (map[newY][newX] == TILE_FOREST)
-            {
-                if (GetRandomValue(1, 100) <= ENCOUNTER_CHANCE) StartEncounter();
-            }
+    /* Collect any potion within reach */
+    for (int i = 0; i < MAX_POTIONS_WORLD; i++)
+    {
+        if (!potions[i].collected && Vector2Distance(player.position, potions[i].position) < POTION_COLLECT_RADIUS)
+        {
+            potions[i].collected = true;
+            player.potions++;
         }
     }
+
+    /* Periodic random encounter roll while actively walking through forest */
+    encounterCooldown -= dt;
+    if (encounterCooldown <= 0.0f)
+    {
+        encounterCooldown = ENCOUNTER_CHECK_INTERVAL;
+        if (Vector2Length(player.velocity) > 5.0f && !IsOnPath(player.position))
+        {
+            if (GetRandomValue(1, 100) <= ENCOUNTER_CHANCE) StartEncounter();
+        }
+    }
+
+    /* Smooth, frame-rate independent camera follow */
+    float followT = 1.0f - expf(-CAMERA_FOLLOW_SPEED * dt);
+    camera.target = Vector2Lerp(camera.target, player.position, followT);
+
+    float halfW = SCREEN_WIDTH  / 2.0f;
+    float halfH = SCREEN_HEIGHT / 2.0f;
+    camera.target.x = Clampf(camera.target.x, halfW, WORLD_WIDTH  - halfW);
+    camera.target.y = Clampf(camera.target.y, halfH, WORLD_HEIGHT - halfH);
+}
+
+static void DrawPotion(Vector2 pos)
+{
+    DrawCircleV(pos, POTION_RADIUS, RED);
+    DrawCircle((int)pos.x, (int)pos.y - 3, 3, WHITE);
+
+    /* Small brown stopper, centered horizontally on top of the potion */
+    Rectangle stopper = { pos.x - 3.0f, pos.y - POTION_RADIUS - 5.0f, 6.0f, 5.0f };
+    DrawRectangleRec(stopper, BROWN);
+    DrawRectangleLinesEx(stopper, 1.0f, (Color){ 60, 40, 20, 255 });
 }
 
 static void DrawWorld(void)
 {
-    for (int y = 0; y < MAP_ROWS; y++)
-    {
-        for (int x = 0; x < MAP_COLS; x++)
-        {
-            Color c = (map[y][x] == TILE_FOREST) ? (Color){ 34, 120, 40, 255 } : (Color){ 194, 165, 110, 255 };
-            DrawRectangle(x * TILE_SIZE, y * TILE_SIZE, TILE_SIZE, TILE_SIZE, c);
-            DrawRectangleLines(x * TILE_SIZE, y * TILE_SIZE, TILE_SIZE, TILE_SIZE, (Color){ 0, 0, 0, 25 });
-        }
-    }
+    BeginMode2D(camera);
 
-    for (int i = 0; i < MAX_POTIONS_WORLD; i++)
-    {
-        if (!potions[i].collected)
-        {
-            int cx = potions[i].gridX * TILE_SIZE + TILE_SIZE / 2;
-            int cy = potions[i].gridY * TILE_SIZE + TILE_SIZE / 2;
-            DrawCircle(cx, cy, 8, RED);
-            DrawCircle(cx, cy - 3, 3, WHITE);
-        }
-    }
+        /* Render texture rows are stored bottom-up, so flip on draw */
+        Rectangle src = { 0, 0, (float)worldTexture.texture.width, -(float)worldTexture.texture.height };
+        DrawTextureRec(worldTexture.texture, src, (Vector2){ 0, 0 }, WHITE);
 
-    int px = player.gridX * TILE_SIZE + TILE_SIZE / 2;
-    int py = player.gridY * TILE_SIZE + TILE_SIZE / 2;
-    DrawRectangle(px - 12, py - 12, 24, 24, (Color){ 60, 120, 230, 255 });
-    DrawRectangleLines(px - 12, py - 12, 24, 24, BLACK);
+        for (int i = 0; i < MAX_POTIONS_WORLD; i++)
+            if (!potions[i].collected) DrawPotion(potions[i].position);
+
+        /* Player: soft gradient circle with a small facing indicator */
+        DrawCircleGradient(player.position, PLAYER_RADIUS,
+                            (Color){ 120, 175, 255, 255 }, (Color){ 40, 80, 200, 255 });
+        DrawCircleLines((int)player.position.x, (int)player.position.y, PLAYER_RADIUS, (Color){ 20, 40, 120, 255 });
+
+        Vector2 tip = {
+            player.position.x + cosf(player.facingAngle) * (PLAYER_RADIUS + 8.0f),
+            player.position.y + sinf(player.facingAngle) * (PLAYER_RADIUS + 8.0f)
+        };
+        DrawLineEx(player.position, tip, 3.0f, (Color){ 20, 40, 120, 255 });
+
+    EndMode2D();
 }
 
 /* ------------------------------------------------------------
@@ -352,7 +526,7 @@ static void ResolveAnimation(void)
 
     if (animActor == ACTOR_PLAYER)
     {
-        enemy.health = Clamp(enemy.health - pendingDamage, 0, enemy.maxHealth);
+        enemy.health = ClampInt(enemy.health - pendingDamage, 0, enemy.maxHealth);
 
         if (enemy.health <= 0)
         {
@@ -370,7 +544,7 @@ static void ResolveAnimation(void)
     }
     else /* ACTOR_ENEMY */
     {
-        player.health = Clamp(player.health - pendingDamage, 0, player.maxHealth);
+        player.health = ClampInt(player.health - pendingDamage, 0, player.maxHealth);
 
         if (player.health <= 0)
         {
@@ -472,7 +646,7 @@ static void UpdateCombat(float dt)
                         if (player.potions > 0)
                         {
                             player.potions--;
-                            player.health = Clamp(player.health + POTION_HEAL_AMOUNT, 0, player.maxHealth);
+                            player.health = ClampInt(player.health + POTION_HEAL_AMOUNT, 0, player.maxHealth);
                             SetMessage("Used a Health Potion! Restored 20 HP.", AFTER_ENEMY_TURN);
                         }
                         else
