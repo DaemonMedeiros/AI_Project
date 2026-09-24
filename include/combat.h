@@ -17,7 +17,6 @@
 #define POTION_HEAL_AMOUNT   20
 #define FLEE_SUCCESS_CHANCE  50
 #define EXP_PER_KILL         15
-#define NUM_ENEMY_TYPES      4
 #define ANIM_DURATION        0.6f
 #define MESSAGE_DURATION     1.6f
 

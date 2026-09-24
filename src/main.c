@@ -33,6 +33,12 @@
 #define POTION_RADIUS         8.0f
 #define POTION_COLLECT_RADIUS 20.0f
 
+/* Overworld knight uses the base sprite size (scale = 1.0). The
+ * sprite is feet-anchored, so we offset the draw position down by
+ * half the sprite height to keep the knight visually centered on
+ * the player's collision point. */
+#define WORLD_SPRITE_SCALE  1.0f
+
 /* ---------- Types ---------- */
 typedef enum { GS_WORLD, GS_COMBAT, GS_GAMEOVER } GameState;
 
@@ -83,6 +89,7 @@ int main(void)
 
     TerrainInit();
     BackgroundsInit();
+    CombatantsInit();
     CombatInit();
     ResetGame();
 
@@ -144,6 +151,7 @@ int main(void)
     }
 
     CombatCleanup();
+    CombatantsUnload();
     BackgroundsUnload();
     TerrainUnload();
     CloseWindow();
@@ -284,12 +292,21 @@ static void DrawWorld(void)
         {
             bool facingRight = (cosf(player.facingAngle) >= 0.0f);
 
+            /* Shadow sits directly under the feet. */
             DrawEllipse((int)player.position.x,
-                        (int)(player.position.y + 36),
-                        16.0f, 5.0f, (Color){ 0, 0, 0, 100 });
+                        (int)(player.position.y + 2),
+                        14.0f, 4.0f, (Color){ 0, 0, 0, 100 });
+
+            /* Knight sprite is feet-anchored, so shift the draw
+             * position down by half the base sprite height to keep
+             * it visually centered on the player's collision point. */
+            Vector2 drawPos = {
+                player.position.x,
+                player.position.y + CombatantGetKnightBaseHeight() * WORLD_SPRITE_SCALE * 0.5f
+            };
 
             CombatantPose pose = { 0.0f, worldTime };
-            CombatantDrawKnight(player.position, facingRight, pose);
+            CombatantDrawKnight(drawPos, facingRight, pose, WORLD_SPRITE_SCALE);
         }
 
     EndMode2D();

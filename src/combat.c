@@ -11,9 +11,15 @@
 #include <math.h>
 #include <stdlib.h>
 
-/* ---------- Layout ---------- */
-static const Vector2 PLAYER_COMBAT_POS = { 200, 440 };
-static const Vector2 ENEMY_COMBAT_POS  = { 600, 440 };
+/* ---------- Layout ----------
+ * Positions are FEET anchors: the sprite's soles sit at this y.
+ * All six battle backgrounds have their ground around y ≈ 440-460,
+ * so feet sit a bit above that for visual balance. */
+static const Vector2 PLAYER_COMBAT_POS = { 220, 470 };
+static const Vector2 ENEMY_COMBAT_POS  = { 600, 470 };
+
+/* Combat sprites render at 2x their base texture size. */
+#define COMBAT_SPRITE_SCALE  2.0f
 
 #define SCREEN_WIDTH   800
 #define SCREEN_HEIGHT  600
@@ -25,9 +31,9 @@ static const Vector2 ENEMY_COMBAT_POS  = { 600, 440 };
 #define MAX_PARTICLES   512
 #define MAX_PROJECTILES 8
 
-/* ---------- Enemy roster ---------- */
-static const char *enemyNames[NUM_ENEMY_TYPES]   = { "Slime", "Goblin", "Wolf", "Orc" };
-static const int   enemyHealths[NUM_ENEMY_TYPES] = { 15, 22, 28, 36 };
+/* ---------- Wolf (only enemy) ---------- */
+#define WOLF_NAME       "Wolf"
+#define WOLF_MAX_HEALTH 28
 
 /* ---------- Internal state ---------- */
 static Enemy        enemy;
@@ -179,10 +185,9 @@ BackgroundType CombatGetBackground(void) { return currentBackground; }
 /* ---------- Encounter setup ---------- */
 void CombatStartEncounter(void)
 {
-    int typeIndex = GetRandomValue(0, NUM_ENEMY_TYPES - 1);
-    enemy.name      = enemyNames[typeIndex];
-    enemy.maxHealth = enemyHealths[typeIndex];
-    enemy.health    = enemyHealths[typeIndex];
+    enemy.name      = WOLF_NAME;
+    enemy.maxHealth = WOLF_MAX_HEALTH;
+    enemy.health    = WOLF_MAX_HEALTH;
 
     currentBackground = BackgroundsPickRandom();
     phase = PHASE_MENU;
@@ -763,8 +768,8 @@ void CombatDraw(int playerHealth, int maxPlayerHealth,
             combatTime + 0.7f
         };
 
-        CombatantDrawKnight(PLAYER_COMBAT_POS, true,  playerPose);
-        CombatantDrawEnemy(enemy.name, ENEMY_COMBAT_POS, false, enemyPose);
+        CombatantDrawKnight(PLAYER_COMBAT_POS, true,  playerPose, COMBAT_SPRITE_SCALE);
+        CombatantDrawWolf  (ENEMY_COMBAT_POS,  true,  enemyPose,  COMBAT_SPRITE_SCALE);
     }
 
     {
@@ -774,7 +779,7 @@ void CombatDraw(int playerHealth, int maxPlayerHealth,
         DrawHealthBar(startX, HEALTH_BAR_Y, HEALTH_BAR_W,
                       playerHealth, maxPlayerHealth, "Player");
         DrawHealthBar(startX + HEALTH_BAR_W + HEALTH_BAR_GAP, HEALTH_BAR_Y, HEALTH_BAR_W,
-                      enemy.health, enemy.maxHealth, "Enemy");
+                      enemy.health, enemy.maxHealth, "Wolf");
     }
 
     if (phase == PHASE_ANIM && animType == ANIM_ATTACK)
