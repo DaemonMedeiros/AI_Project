@@ -17,22 +17,14 @@
 #define POTION_HEAL_AMOUNT   20
 #define FLEE_SUCCESS_CHANCE  50
 #define EXP_PER_KILL         15
-
-#define NUM_ENEMY_TYPES 4
-
+#define NUM_ENEMY_TYPES      4
 #define ANIM_DURATION        0.6f
 #define MESSAGE_DURATION     1.6f
 
-/* ---------- Menu / phase enums ---------- */
+/* ---------- Enums ---------- */
 typedef enum { CM_MAIN, CM_SPELL, CM_ITEM } CombatMenu;
-
 typedef enum { ACTOR_PLAYER, ACTOR_ENEMY } Actor;
-typedef enum {
-    ANIM_ATTACK,
-    ANIM_SPELL_FIRE,
-    ANIM_SPELL_ICE
-} AnimType;
-
+typedef enum { ANIM_ATTACK, ANIM_SPELL_FIRE, ANIM_SPELL_ICE } AnimType;
 typedef enum { PHASE_MENU, PHASE_ANIM, PHASE_MESSAGE } CombatPhase;
 
 typedef enum {
@@ -44,50 +36,39 @@ typedef enum {
     AFTER_GAMEOVER
 } AfterMessage;
 
-/* ---------- Combatant data ---------- */
+typedef enum {
+    COMBAT_RESULT_NONE,
+    COMBAT_RESULT_VICTORY,
+    COMBAT_RESULT_FLED,
+    COMBAT_RESULT_DEFEAT
+} CombatResult;
+
 typedef struct {
     const char *name;
     int maxHealth, health;
 } Enemy;
 
-/* ---------- Combat resolution result returned to main ---------- */
-typedef enum {
-    COMBAT_RESULT_NONE,      /* combat still running */
-    COMBAT_RESULT_VICTORY,   /* enemy defeated */
-    COMBAT_RESULT_FLED,      /* player escaped */
-    COMBAT_RESULT_DEFEAT     /* player died */
-} CombatResult;
-
 /* ---------- Public API ---------- */
-void  CombatInit(void);
-void  CombatCleanup(void);
+void CombatInit(void);
+void CombatCleanup(void);
+void CombatStartEncounter(void);
 
-/* Begin a new encounter with a randomly chosen enemy + background */
-void  CombatStartEncounter(void);
-
-/* Update / draw. `playerHealth` etc. are passed by pointer so main owns the
- * persistent RPG stats. Returns the current CombatResult. */
 CombatResult CombatUpdate(float dt,
-                          int  *playerHealth,
-                          int  *playerPotions,
-                          int  *playerScore,
-                          int  *playerExp);
+                          int *playerHealth,
+                          int *playerPotions,
+                          int *playerScore,
+                          int *playerExp);
 
-void  CombatDraw(int playerHealth, int maxPlayerHealth,
-                 int playerPotions, int playerScore);
+void CombatDraw(int playerHealth, int maxPlayerHealth,
+                int playerPotions, int playerScore);
 
-/* Friendly name of the active enemy (for logging / UI) */
 const char *CombatGetEnemyName(void);
-
-/* Background the current encounter is using */
 BackgroundType CombatGetBackground(void);
 
-/* ---------- Standalone spell VFX ----------
- * Fireball / ice projectiles, exposed for reuse elsewhere. */
-void  CombatSpawnFireball(Vector2 origin, Vector2 target);
-void  CombatSpawnIceSpell(Vector2 origin, Vector2 target);
-void  CombatUpdateEffects(float dt);
-void  CombatDrawEffects(void);
-void  CombatClearEffects(void);
+void CombatSpawnFireball(Vector2 origin, Vector2 target);
+void CombatSpawnIceSpell(Vector2 origin, Vector2 target);
+void CombatUpdateEffects(float dt);
+void CombatDrawEffects(void);
+void CombatClearEffects(void);
 
 #endif /* COMBAT_H */

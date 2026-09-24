@@ -11,15 +11,17 @@ static int             pathSampleCount;
 static RenderTexture2D worldTexture;
 static bool            initialized;
 
-/* ---------------------------------------------------------- */
-static float LocalClampf(float v, float lo, float hi)
+static float LocalClampf(float value, float low, float high)
 {
-    if (v < lo) return lo;
-    if (v > hi) return hi;
-    return v;
+    if (value < low) return low;
+    if (value > high) return high;
+    return value;
 }
 
-float TerrainClampf(float v, float lo, float hi) { return LocalClampf(v, lo, hi); }
+float TerrainClampf(float value, float low, float high)
+{
+    return LocalClampf(value, low, high);
+}
 
 /* ---------------------------------------------------------- */
 void TerrainInit(void)
@@ -65,7 +67,6 @@ void TerrainInit(void)
     BeginTextureMode(worldTexture);
         ClearBackground((Color){ 40, 70, 35, 255 });
 
-        /* Forest clumps */
         for (int c = 0; c < NUM_TREE_CLUSTERS; c++)
         {
             Vector2 center = { (float)GetRandomValue(0, WORLD_WIDTH),
@@ -75,40 +76,37 @@ void TerrainInit(void)
 
             for (int t = 0; t < treeCount; t++)
             {
-                float ang  = (float)GetRandomValue(0, 360) * DEG2RAD;
-                float dist = (float)GetRandomValue(0, (int)clusterRadius);
-                Vector2 pos = { center.x + cosf(ang) * dist, center.y + sinf(ang) * dist };
-                float r = (float)GetRandomValue(14, 34);
+                float angle    = (float)GetRandomValue(0, 360) * DEG2RAD;
+                float distance = (float)GetRandomValue(0, (int)clusterRadius);
+                Vector2 pos = { center.x + cosf(angle) * distance, center.y + sinf(angle) * distance };
+                float radius = (float)GetRandomValue(14, 34);
 
-                Color col;
+                Color color;
                 switch (GetRandomValue(0, 3))
                 {
-                    case 0:  col = (Color){ 24, 90, 32, 235 };  break;
-                    case 1:  col = (Color){ 30, 110, 40, 220 }; break;
-                    case 2:  col = (Color){ 20, 75, 28, 245 };  break;
-                    default: col = (Color){ 40, 125, 48, 210 }; break;
+                    case 0:  color = (Color){ 24, 90, 32, 235 };  break;
+                    case 1:  color = (Color){ 30, 110, 40, 220 }; break;
+                    case 2:  color = (Color){ 20, 75, 28, 245 };  break;
+                    default: color = (Color){ 40, 125, 48, 210 }; break;
                 }
-                DrawCircleV(pos, r, col);
+                DrawCircleV(pos, radius, color);
             }
         }
 
-        /* Sparse solitary trees */
         for (int i = 0; i < NUM_SPARSE_TREES; i++)
         {
             Vector2 pos = { (float)GetRandomValue(0, WORLD_WIDTH),
                             (float)GetRandomValue(0, WORLD_HEIGHT) };
-            float r = (float)GetRandomValue(10, 22);
-            DrawCircleV(pos, r, (Color){ 28, 100, 36, 200 });
+            float radius = (float)GetRandomValue(10, 22);
+            DrawCircleV(pos, radius, (Color){ 28, 100, 36, 200 });
         }
 
-        /* Dirt path edge */
         for (int i = 0; i < pathSampleCount; i++)
         {
             float wobble = sinf((float)i * 0.18f) * 7.0f;
             float radius = PATH_BASE_RADIUS + wobble;
             DrawCircleV(pathSamples[i], radius + 14, (Color){ 150, 120, 70, 255 });
         }
-        /* Dirt path fill */
         for (int i = 0; i < pathSampleCount; i++)
         {
             float wobble = sinf((float)i * 0.18f) * 7.0f;
@@ -150,7 +148,6 @@ bool TerrainIsOnPath(Vector2 pos)
 
 void TerrainDraw(void)
 {
-    /* Render texture rows are stored bottom-up, so flip on draw */
-    Rectangle src = { 0, 0, (float)worldTexture.texture.width, -(float)worldTexture.texture.height };
-    DrawTextureRec(worldTexture.texture, src, (Vector2){ 0, 0 }, WHITE);
+    Rectangle source = { 0, 0, (float)worldTexture.texture.width, -(float)worldTexture.texture.height };
+    DrawTextureRec(worldTexture.texture, source, (Vector2){ 0, 0 }, WHITE);
 }

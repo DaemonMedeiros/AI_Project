@@ -11,12 +11,19 @@
 #include <math.h>
 #include <stdlib.h>
 
-/* ---------- Layout ----------
- * Sprites are anchored near the bottom so their feet sit on the
- * ground line of every background (ground starts around y=420-450
- * in all six backdrops). */
-static const Vector2 playerCombatPos = { 200, 440 };
-static const Vector2 enemyCombatPos  = { 600, 440 };
+/* ---------- Layout ---------- */
+static const Vector2 PLAYER_COMBAT_POS = { 200, 440 };
+static const Vector2 ENEMY_COMBAT_POS  = { 600, 440 };
+
+#define SCREEN_WIDTH   800
+#define SCREEN_HEIGHT  600
+#define HEALTH_BAR_W   300
+#define HEALTH_BAR_H   18
+#define HEALTH_BAR_Y   (SCREEN_HEIGHT - 40)
+#define HEALTH_BAR_GAP 40
+
+#define MAX_PARTICLES   512
+#define MAX_PROJECTILES 8
 
 /* ---------- Enemy roster ---------- */
 static const char *enemyNames[NUM_ENEMY_TYPES]   = { "Slime", "Goblin", "Wolf", "Orc" };
@@ -38,14 +45,10 @@ static float        messageTimer;
 static AfterMessage afterMessage;
 
 static CombatResult currentResult;
-
 static BackgroundType currentBackground = BG_FOREST_DAY;
-
 static float combatTime = 0.0f;
 
-/* ---------- Effect system ---------- */
-#define MAX_PARTICLES 512
-
+/* ---------- Particle system ---------- */
 typedef enum {
     PT_FIRE_TRAIL, PT_FIRE_BURST, PT_FIRE_EMBER,
     PT_ICE_TRAIL, PT_ICE_SHARD, PT_ICE_MIST, PT_ICE_BURST
@@ -72,55 +75,39 @@ typedef struct {
     bool    isIce;
     Vector2 origin;
     Vector2 target;
-    float   t;
+    float   progress;
     float   duration;
     bool    exploded;
     float   explodeTimer;
     float   jitterSeed;
 } SpellProjectile;
 
-#define MAX_PROJECTILES 8
 static SpellProjectile projectiles[MAX_PROJECTILES];
 
-static int   ClampInt(int v, int lo, int hi){ if (v<lo) return lo; if (v>hi) return hi; return v; }
-static float RandRange(float lo, float hi){ return lo + (float)GetRandomValue(0, 10000) / 10000.0f * (hi - lo); }
-static float RandSym(float range){ return RandRange(-range, range); }
+/* ---------- Math helpers ---------- */
+static int ClampInt(int value, int low, int high)
+{
+    if (value < low) return low;
+    if (value > high) return high;
+    return value;
+}
 
-static Vector2 Lerp2(Vector2 a, Vector2 b, float t)
+static float RandRange(float low, float high)
+{
+    return low + (float)GetRandomValue(0, 10000) / 10000.0f * (high - low);
+}
+
+static float RandSym(float range) { return RandRange(-range, range); }
+
+static Vector2 LerpVector(Vector2 a, Vector2 b, float t)
 {
     return (Vector2){ a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t };
 }
 
-static int AllocParticle(void)
-{
-    for (int i = 0; i < MAX_PARTICLES; i++)
-        if (!particles[i].active) return i;
-    return -1;
-}
-
-static void SpawnParticle(ParticleType type, Vector2 pos, Vector2 vel,
-                          float life, float size,
-                          Color colStart, Color colEnd)
-{
-    int idx = AllocParticle();
-    if (idx < 0) return;
-    Particle *p = &particles[idx];
-    p->active   = true;
-    p->type     = type;
-    p->pos      = pos;
-    p->vel      = vel;
-    p->life     = life;
-    p->maxLife  = life;
-    p->size     = size;
-    p->rot      = RandRange(0.0f, PI * 2.0f);
-    p->rotSpeed = RandSym(6.0f);
-    p->colStart = colStart;
-    p->colEnd   = colEnd;
-}
-
 static Color LerpColor(Color a, Color b, float t)
 {
-    if (t < 0) t = 0; if (t > 1) t = 1;
+    if (t < 0) t = 0;
+    if (t > 1) t = 1;
     return (Color){
         (unsigned char)(a.r + (b.r - a.r) * t),
         (unsigned char)(a.g + (b.g - a.g) * t),
@@ -129,12 +116,40 @@ static Color LerpColor(Color a, Color b, float t)
     };
 }
 
-static Color FadeColor(Color c, float alphaScale)
+static Color FadeColor(Color color, float alphaScale)
 {
-    float a = c.a * alphaScale;
-    if (a < 0) a = 0; if (a > 255) a = 255;
-    c.a = (unsigned char)a;
-    return c;
+    float alpha = color.a * alphaScale;
+    if (alpha < 0) alpha = 0;
+    if (alpha > 255) alpha = 255;
+    color.a = (unsigned char)alpha;
+    return color;
+}
+
+/* ---------- Particle helpers ---------- */
+static int AllocParticle(void)
+{
+    for (int i = 0; i < MAX_PARTICLES; i++)
+        if (!particles[i].active) return i;
+    return -1;
+}
+
+static void SpawnParticle(ParticleType type, Vector2 pos, Vector2 vel,
+                          float life, float size, Color colStart, Color colEnd)
+{
+    int index = AllocParticle();
+    if (index < 0) return;
+    Particle *particle = &particles[index];
+    particle->active   = true;
+    particle->type     = type;
+    particle->pos      = pos;
+    particle->vel      = vel;
+    particle->life     = life;
+    particle->maxLife  = life;
+    particle->size     = size;
+    particle->rot      = RandRange(0.0f, PI * 2.0f);
+    particle->rotSpeed = RandSym(6.0f);
+    particle->colStart = colStart;
+    particle->colEnd   = colEnd;
 }
 
 /* ---------- Lifecycle ---------- */
@@ -164,13 +179,12 @@ BackgroundType CombatGetBackground(void) { return currentBackground; }
 /* ---------- Encounter setup ---------- */
 void CombatStartEncounter(void)
 {
-    int t = GetRandomValue(0, NUM_ENEMY_TYPES - 1);
-    enemy.name      = enemyNames[t];
-    enemy.maxHealth = enemyHealths[t];
-    enemy.health    = enemyHealths[t];
+    int typeIndex = GetRandomValue(0, NUM_ENEMY_TYPES - 1);
+    enemy.name      = enemyNames[typeIndex];
+    enemy.maxHealth = enemyHealths[typeIndex];
+    enemy.health    = enemyHealths[typeIndex];
 
     currentBackground = BackgroundsPickRandom();
-
     phase = PHASE_MENU;
     combatMenu = CM_MAIN;
     menuSelection = 0;
@@ -188,30 +202,26 @@ static void SetMessage(const char *text, AfterMessage after)
     phase = PHASE_MESSAGE;
 }
 
-/* ============================================================
- *  Fireball VFX
- * ============================================================ */
+/* ---------- Fireball VFX ---------- */
 static void EmitFireTrail(Vector2 pos, float intensity)
 {
-    int n = GetRandomValue(2, 4);
-    for (int i = 0; i < n; i++)
+    int count = GetRandomValue(2, 4);
+    for (int i = 0; i < count; i++)
     {
-        Vector2 v = { RandSym(60.0f) - 40.0f, RandSym(60.0f) };
-        Color start = (Color){ 255, (unsigned char)GetRandomValue(180, 240), 60, 255 };
-        Color end   = (Color){ 200, 40, 10, 0 };
-        SpawnParticle(PT_FIRE_TRAIL, pos, v,
+        Vector2 vel = { RandSym(60.0f) - 40.0f, RandSym(60.0f) };
+        Color start = { 255, (unsigned char)GetRandomValue(180, 240), 60, 255 };
+        Color end   = { 200, 40, 10, 0 };
+        SpawnParticle(PT_FIRE_TRAIL, pos, vel,
                       RandRange(0.25f, 0.55f) * intensity,
                       RandRange(6.0f, 12.0f) * intensity,
                       start, end);
     }
     if (GetRandomValue(0, 3) == 0)
     {
-        Vector2 v = { RandSym(30.0f), RandSym(30.0f) - 20.0f };
-        SpawnParticle(PT_FIRE_TRAIL, pos, v,
-                      RandRange(0.5f, 0.9f),
-                      RandRange(10.0f, 16.0f),
-                      (Color){ 120, 100, 90, 140 },
-                      (Color){ 60, 50, 50, 0 });
+        Vector2 vel = { RandSym(30.0f), RandSym(30.0f) - 20.0f };
+        SpawnParticle(PT_FIRE_TRAIL, pos, vel,
+                      RandRange(0.5f, 0.9f), RandRange(10.0f, 16.0f),
+                      (Color){ 120, 100, 90, 140 }, (Color){ 60, 50, 50, 0 });
     }
 }
 
@@ -219,73 +229,58 @@ static void EmitFireExplosion(Vector2 pos)
 {
     for (int i = 0; i < 12; i++)
     {
-        float ang = RandRange(0, PI * 2.0f);
-        float spd = RandRange(60.0f, 220.0f);
-        Vector2 v = { cosf(ang) * spd, sinf(ang) * spd };
-        SpawnParticle(PT_FIRE_BURST, pos, v,
-                      RandRange(0.35f, 0.6f),
-                      RandRange(14.0f, 26.0f),
-                      (Color){ 255, 250, 200, 255 },
-                      (Color){ 255, 80, 20, 0 });
+        float angle = RandRange(0, PI * 2.0f);
+        float speed = RandRange(60.0f, 220.0f);
+        Vector2 vel = { cosf(angle) * speed, sinf(angle) * speed };
+        SpawnParticle(PT_FIRE_BURST, pos, vel,
+                      RandRange(0.35f, 0.6f), RandRange(14.0f, 26.0f),
+                      (Color){ 255, 250, 200, 255 }, (Color){ 255, 80, 20, 0 });
     }
     for (int i = 0; i < 26; i++)
     {
-        float ang = RandRange(0, PI * 2.0f);
-        float spd = RandRange(120.0f, 420.0f);
-        Vector2 v = { cosf(ang) * spd, sinf(ang) * spd };
-        SpawnParticle(PT_FIRE_BURST, pos, v,
-                      RandRange(0.5f, 0.9f),
-                      RandRange(10.0f, 20.0f),
-                      (Color){ 255, 170, 60, 255 },
-                      (Color){ 180, 30, 10, 0 });
+        float angle = RandRange(0, PI * 2.0f);
+        float speed = RandRange(120.0f, 420.0f);
+        Vector2 vel = { cosf(angle) * speed, sinf(angle) * speed };
+        SpawnParticle(PT_FIRE_BURST, pos, vel,
+                      RandRange(0.5f, 0.9f), RandRange(10.0f, 20.0f),
+                      (Color){ 255, 170, 60, 255 }, (Color){ 180, 30, 10, 0 });
     }
     for (int i = 0; i < 30; i++)
     {
-        float ang = RandRange(0, PI * 2.0f);
-        float spd = RandRange(40.0f, 200.0f);
-        Vector2 v = { cosf(ang) * spd, sinf(ang) * spd - RandRange(0.0f, 60.0f) };
-        SpawnParticle(PT_FIRE_EMBER, pos, v,
-                      RandRange(0.7f, 1.4f),
-                      RandRange(2.0f, 5.0f),
-                      (Color){ 255, 230, 120, 255 },
-                      (Color){ 200, 60, 0, 0 });
+        float angle = RandRange(0, PI * 2.0f);
+        float speed = RandRange(40.0f, 200.0f);
+        Vector2 vel = { cosf(angle) * speed, sinf(angle) * speed - RandRange(0.0f, 60.0f) };
+        SpawnParticle(PT_FIRE_EMBER, pos, vel,
+                      RandRange(0.7f, 1.4f), RandRange(2.0f, 5.0f),
+                      (Color){ 255, 230, 120, 255 }, (Color){ 200, 60, 0, 0 });
     }
     for (int i = 0; i < 20; i++)
     {
-        float ang = (float)i / 20.0f * PI * 2.0f;
-        float spd = 260.0f;
-        Vector2 v = { cosf(ang) * spd, sinf(ang) * spd };
-        SpawnParticle(PT_FIRE_BURST, pos, v,
-                      0.45f, 8.0f,
-                      (Color){ 255, 240, 180, 255 },
-                      (Color){ 255, 100, 30, 0 });
+        float angle = (float)i / 20.0f * PI * 2.0f;
+        Vector2 vel = { cosf(angle) * 260.0f, sinf(angle) * 260.0f };
+        SpawnParticle(PT_FIRE_BURST, pos, vel, 0.45f, 8.0f,
+                      (Color){ 255, 240, 180, 255 }, (Color){ 255, 100, 30, 0 });
     }
 }
 
-/* ============================================================
- *  Ice spell VFX
- * ============================================================ */
+/* ---------- Ice spell VFX ---------- */
 static void EmitIceTrail(Vector2 pos, float intensity)
 {
-    int n = GetRandomValue(2, 4);
-    for (int i = 0; i < n; i++)
+    int count = GetRandomValue(2, 4);
+    for (int i = 0; i < count; i++)
     {
-        Vector2 v = { RandSym(40.0f) - 20.0f, RandSym(50.0f) };
-        Color start = (Color){ 200, 235, 255, 255 };
-        Color end   = (Color){ 90, 150, 220, 0 };
-        SpawnParticle(PT_ICE_TRAIL, pos, v,
+        Vector2 vel = { RandSym(40.0f) - 20.0f, RandSym(50.0f) };
+        SpawnParticle(PT_ICE_TRAIL, pos, vel,
                       RandRange(0.3f, 0.6f) * intensity,
                       RandRange(4.0f, 9.0f) * intensity,
-                      start, end);
+                      (Color){ 200, 235, 255, 255 }, (Color){ 90, 150, 220, 0 });
     }
     if (GetRandomValue(0, 2) == 0)
     {
-        Vector2 v = { RandSym(70.0f), RandSym(70.0f) };
-        SpawnParticle(PT_ICE_SHARD, pos, v,
-                      RandRange(0.4f, 0.8f),
-                      RandRange(6.0f, 11.0f),
-                      (Color){ 230, 250, 255, 255 },
-                      (Color){ 120, 180, 240, 0 });
+        Vector2 vel = { RandSym(70.0f), RandSym(70.0f) };
+        SpawnParticle(PT_ICE_SHARD, pos, vel,
+                      RandRange(0.4f, 0.8f), RandRange(6.0f, 11.0f),
+                      (Color){ 230, 250, 255, 255 }, (Color){ 120, 180, 240, 0 });
     }
 }
 
@@ -293,52 +288,41 @@ static void EmitIceExplosion(Vector2 pos)
 {
     for (int i = 0; i < 10; i++)
     {
-        float ang = RandRange(0, PI * 2.0f);
-        float spd = RandRange(50.0f, 180.0f);
-        Vector2 v = { cosf(ang) * spd, sinf(ang) * spd };
-        SpawnParticle(PT_ICE_BURST, pos, v,
-                      RandRange(0.3f, 0.55f),
-                      RandRange(16.0f, 28.0f),
-                      (Color){ 255, 255, 255, 255 },
-                      (Color){ 140, 200, 255, 0 });
+        float angle = RandRange(0, PI * 2.0f);
+        float speed = RandRange(50.0f, 180.0f);
+        Vector2 vel = { cosf(angle) * speed, sinf(angle) * speed };
+        SpawnParticle(PT_ICE_BURST, pos, vel,
+                      RandRange(0.3f, 0.55f), RandRange(16.0f, 28.0f),
+                      (Color){ 255, 255, 255, 255 }, (Color){ 140, 200, 255, 0 });
     }
     for (int i = 0; i < 32; i++)
     {
-        float ang = RandRange(0, PI * 2.0f);
-        float spd = RandRange(180.0f, 480.0f);
-        Vector2 v = { cosf(ang) * spd, sinf(ang) * spd };
-        SpawnParticle(PT_ICE_SHARD, pos, v,
-                      RandRange(0.6f, 1.1f),
-                      RandRange(7.0f, 15.0f),
-                      (Color){ 240, 250, 255, 255 },
-                      (Color){ 90, 150, 220, 0 });
+        float angle = RandRange(0, PI * 2.0f);
+        float speed = RandRange(180.0f, 480.0f);
+        Vector2 vel = { cosf(angle) * speed, sinf(angle) * speed };
+        SpawnParticle(PT_ICE_SHARD, pos, vel,
+                      RandRange(0.6f, 1.1f), RandRange(7.0f, 15.0f),
+                      (Color){ 240, 250, 255, 255 }, (Color){ 90, 150, 220, 0 });
     }
     for (int i = 0; i < 24; i++)
     {
-        float ang = RandRange(0, PI * 2.0f);
-        float spd = RandRange(20.0f, 90.0f);
-        Vector2 v = { cosf(ang) * spd, sinf(ang) * spd - 15.0f };
-        SpawnParticle(PT_ICE_MIST, pos, v,
-                      RandRange(0.9f, 1.6f),
-                      RandRange(18.0f, 34.0f),
-                      (Color){ 200, 230, 255, 200 },
-                      (Color){ 150, 200, 240, 0 });
+        float angle = RandRange(0, PI * 2.0f);
+        float speed = RandRange(20.0f, 90.0f);
+        Vector2 vel = { cosf(angle) * speed, sinf(angle) * speed - 15.0f };
+        SpawnParticle(PT_ICE_MIST, pos, vel,
+                      RandRange(0.9f, 1.6f), RandRange(18.0f, 34.0f),
+                      (Color){ 200, 230, 255, 200 }, (Color){ 150, 200, 240, 0 });
     }
     for (int i = 0; i < 22; i++)
     {
-        float ang = (float)i / 22.0f * PI * 2.0f;
-        float spd = 240.0f;
-        Vector2 v = { cosf(ang) * spd, sinf(ang) * spd };
-        SpawnParticle(PT_ICE_BURST, pos, v,
-                      0.5f, 8.0f,
-                      (Color){ 220, 245, 255, 255 },
-                      (Color){ 120, 180, 240, 0 });
+        float angle = (float)i / 22.0f * PI * 2.0f;
+        Vector2 vel = { cosf(angle) * 240.0f, sinf(angle) * 240.0f };
+        SpawnParticle(PT_ICE_BURST, pos, vel, 0.5f, 8.0f,
+                      (Color){ 220, 245, 255, 255 }, (Color){ 120, 180, 240, 0 });
     }
 }
 
-/* ============================================================
- *  Standalone projectile spawning
- * ============================================================ */
+/* ---------- Projectile spawning ---------- */
 static int AllocProjectile(void)
 {
     for (int i = 0; i < MAX_PROJECTILES; i++)
@@ -348,158 +332,154 @@ static int AllocProjectile(void)
 
 static void SpawnProjectile(Vector2 origin, Vector2 target, bool isIce)
 {
-    int idx = AllocProjectile();
-    if (idx < 0) return;
-    SpellProjectile *p = &projectiles[idx];
-    p->active       = true;
-    p->isIce        = isIce;
-    p->origin       = origin;
-    p->target       = target;
-    p->t            = 0.0f;
-    p->duration     = ANIM_DURATION;
-    p->exploded     = false;
-    p->explodeTimer = 0.0f;
-    p->jitterSeed   = RandRange(0.0f, 1000.0f);
+    int index = AllocProjectile();
+    if (index < 0) return;
+    SpellProjectile *projectile = &projectiles[index];
+    projectile->active       = true;
+    projectile->isIce        = isIce;
+    projectile->origin       = origin;
+    projectile->target       = target;
+    projectile->progress     = 0.0f;
+    projectile->duration     = ANIM_DURATION;
+    projectile->exploded     = false;
+    projectile->explodeTimer = 0.0f;
+    projectile->jitterSeed   = RandRange(0.0f, 1000.0f);
 }
 
 void CombatSpawnFireball(Vector2 origin, Vector2 target) { SpawnProjectile(origin, target, false); }
 void CombatSpawnIceSpell(Vector2 origin, Vector2 target) { SpawnProjectile(origin, target, true);  }
 
-/* ============================================================
- *  Effect update
- * ============================================================ */
+/* ---------- Effect update ---------- */
 void CombatUpdateEffects(float dt)
 {
     for (int i = 0; i < MAX_PARTICLES; i++)
     {
-        Particle *p = &particles[i];
-        if (!p->active) continue;
+        Particle *particle = &particles[i];
+        if (!particle->active) continue;
 
-        p->life -= dt;
-        if (p->life <= 0.0f) { p->active = false; continue; }
+        particle->life -= dt;
+        if (particle->life <= 0.0f) { particle->active = false; continue; }
 
-        switch (p->type)
+        switch (particle->type)
         {
             case PT_FIRE_TRAIL:
             case PT_FIRE_BURST:
-                p->vel.x *= (1.0f - 2.5f * dt);
-                p->vel.y *= (1.0f - 2.5f * dt);
-                p->vel.y -= 30.0f * dt;
+                particle->vel.x *= (1.0f - 2.5f * dt);
+                particle->vel.y *= (1.0f - 2.5f * dt);
+                particle->vel.y -= 30.0f * dt;
                 break;
             case PT_FIRE_EMBER:
-                p->vel.x *= (1.0f - 1.2f * dt);
-                p->vel.y -= 40.0f * dt;
+                particle->vel.x *= (1.0f - 1.2f * dt);
+                particle->vel.y -= 40.0f * dt;
                 break;
             case PT_ICE_TRAIL:
             case PT_ICE_BURST:
-                p->vel.x *= (1.0f - 3.0f * dt);
-                p->vel.y *= (1.0f - 3.0f * dt);
+                particle->vel.x *= (1.0f - 3.0f * dt);
+                particle->vel.y *= (1.0f - 3.0f * dt);
                 break;
             case PT_ICE_SHARD:
-                p->vel.x *= (1.0f - 1.5f * dt);
-                p->vel.y *= (1.0f - 1.5f * dt);
-                p->vel.y += 120.0f * dt;
+                particle->vel.x *= (1.0f - 1.5f * dt);
+                particle->vel.y *= (1.0f - 1.5f * dt);
+                particle->vel.y += 120.0f * dt;
                 break;
             case PT_ICE_MIST:
-                p->vel.x *= (1.0f - 1.8f * dt);
-                p->vel.y *= (1.0f - 1.8f * dt);
-                p->vel.y -= 8.0f * dt;
+                particle->vel.x *= (1.0f - 1.8f * dt);
+                particle->vel.y *= (1.0f - 1.8f * dt);
+                particle->vel.y -= 8.0f * dt;
                 break;
         }
 
-        p->pos.x += p->vel.x * dt;
-        p->pos.y += p->vel.y * dt;
-        p->rot   += p->rotSpeed * dt;
+        particle->pos.x += particle->vel.x * dt;
+        particle->pos.y += particle->vel.y * dt;
+        particle->rot   += particle->rotSpeed * dt;
     }
 
     for (int i = 0; i < MAX_PROJECTILES; i++)
     {
-        SpellProjectile *p = &projectiles[i];
-        if (!p->active) continue;
+        SpellProjectile *projectile = &projectiles[i];
+        if (!projectile->active) continue;
 
-        if (!p->exploded)
+        if (!projectile->exploded)
         {
-            p->t += dt / p->duration;
+            projectile->progress += dt / projectile->duration;
+            Vector2 pos = LerpVector(projectile->origin, projectile->target, projectile->progress);
+            if (projectile->isIce) EmitIceTrail(pos, 1.0f);
+            else                    EmitFireTrail(pos, 1.0f);
 
-            Vector2 pos = Lerp2(p->origin, p->target, p->t);
-            if (p->isIce) EmitIceTrail(pos, 1.0f);
-            else          EmitFireTrail(pos, 1.0f);
-
-            if (p->t >= 1.0f)
+            if (projectile->progress >= 1.0f)
             {
-                p->t = 1.0f;
-                p->exploded = true;
-                p->explodeTimer = 0.35f;
-                if (p->isIce) EmitIceExplosion(p->target);
-                else          EmitFireExplosion(p->target);
+                projectile->progress = 1.0f;
+                projectile->exploded = true;
+                projectile->explodeTimer = 0.35f;
+                if (projectile->isIce) EmitIceExplosion(projectile->target);
+                else                    EmitFireExplosion(projectile->target);
             }
         }
         else
         {
-            p->explodeTimer -= dt;
-            if (p->explodeTimer <= 0.0f) p->active = false;
+            projectile->explodeTimer -= dt;
+            if (projectile->explodeTimer <= 0.0f) projectile->active = false;
         }
     }
 }
 
-/* ============================================================
- *  Effect drawing
- * ============================================================ */
-static void DrawParticle(const Particle *p)
+/* ---------- Effect drawing ---------- */
+static void DrawParticle(const Particle *particle)
 {
-    float t = 1.0f - (p->life / p->maxLife);
-    Color c = LerpColor(p->colStart, p->colEnd, t);
-    float size = p->size * (1.0f - t * 0.7f);
+    float t = 1.0f - (particle->life / particle->maxLife);
+    Color color = LerpColor(particle->colStart, particle->colEnd, t);
+    float size = particle->size * (1.0f - t * 0.7f);
 
-    switch (p->type)
+    switch (particle->type)
     {
         case PT_FIRE_TRAIL:
         case PT_FIRE_BURST:
             BeginBlendMode(BLEND_ADDITIVE);
-            DrawCircleV(p->pos, size, FadeColor(c, 1.0f - t));
-            DrawCircleV(p->pos, size * 0.5f, FadeColor((Color){255,255,220,c.a}, 1.0f - t));
+            DrawCircleV(particle->pos, size, FadeColor(color, 1.0f - t));
+            DrawCircleV(particle->pos, size * 0.5f, FadeColor((Color){255,255,220,color.a}, 1.0f - t));
             EndBlendMode();
             break;
 
         case PT_FIRE_EMBER:
             BeginBlendMode(BLEND_ADDITIVE);
-            DrawCircleV(p->pos, size, FadeColor(c, 1.0f - t));
+            DrawCircleV(particle->pos, size, FadeColor(color, 1.0f - t));
             EndBlendMode();
             break;
 
         case PT_ICE_TRAIL:
         case PT_ICE_MIST:
-            DrawCircleV(p->pos, size, FadeColor(c, (1.0f - t) * 0.85f));
+            DrawCircleV(particle->pos, size, FadeColor(color, (1.0f - t) * 0.85f));
             break;
 
         case PT_ICE_SHARD:
         {
             float s = size;
-            Vector2 pts[4] = {
-                { p->pos.x,            p->pos.y - s        },
-                { p->pos.x + s * 0.6f, p->pos.y            },
-                { p->pos.x,            p->pos.y + s        },
-                { p->pos.x - s * 0.6f, p->pos.y            }
+            Vector2 points[4] = {
+                { particle->pos.x,            particle->pos.y - s        },
+                { particle->pos.x + s * 0.6f, particle->pos.y            },
+                { particle->pos.x,            particle->pos.y + s        },
+                { particle->pos.x - s * 0.6f, particle->pos.y            }
             };
-            float cs = cosf(p->rot), sn = sinf(p->rot);
+            float cosRot = cosf(particle->rot);
+            float sinRot = sinf(particle->rot);
             for (int k = 0; k < 4; k++)
             {
-                float dx = pts[k].x - p->pos.x;
-                float dy = pts[k].y - p->pos.y;
-                pts[k].x = p->pos.x + dx * cs - dy * sn;
-                pts[k].y = p->pos.y + dx * sn + dy * cs;
+                float dx = points[k].x - particle->pos.x;
+                float dy = points[k].y - particle->pos.y;
+                points[k].x = particle->pos.x + dx * cosRot - dy * sinRot;
+                points[k].y = particle->pos.y + dx * sinRot + dy * cosRot;
             }
-            Color cc = FadeColor(c, 1.0f - t * 0.8f);
+            Color cc = FadeColor(color, 1.0f - t * 0.8f);
             BeginBlendMode(BLEND_ADDITIVE);
-            DrawTriangle(pts[0], pts[3], pts[1], cc);
-            DrawTriangle(pts[1], pts[3], pts[2], cc);
+            DrawTriangle(points[0], points[3], points[1], cc);
+            DrawTriangle(points[1], points[3], points[2], cc);
             EndBlendMode();
             break;
         }
 
         case PT_ICE_BURST:
             BeginBlendMode(BLEND_ADDITIVE);
-            DrawCircleV(p->pos, size, FadeColor(c, 1.0f - t));
+            DrawCircleV(particle->pos, size, FadeColor(color, 1.0f - t));
             EndBlendMode();
             break;
     }
@@ -512,12 +492,12 @@ void CombatDrawEffects(void)
 
     for (int i = 0; i < MAX_PROJECTILES; i++)
     {
-        SpellProjectile *p = &projectiles[i];
-        if (!p->active || p->exploded) continue;
+        SpellProjectile *projectile = &projectiles[i];
+        if (!projectile->active || projectile->exploded) continue;
 
-        Vector2 pos = Lerp2(p->origin, p->target, p->t);
+        Vector2 pos = LerpVector(projectile->origin, projectile->target, projectile->progress);
 
-        if (p->isIce)
+        if (projectile->isIce)
         {
             BeginBlendMode(BLEND_ADDITIVE);
             DrawCircleV(pos, 18, (Color){ 120, 180, 255, 90 });
@@ -526,14 +506,14 @@ void CombatDrawEffects(void)
             EndBlendMode();
             for (int k = 0; k < 4; k++)
             {
-                float a = p->jitterSeed + (float)k * PI * 0.5f + p->t * 8.0f;
-                Vector2 q = { pos.x + cosf(a) * 12.0f, pos.y + sinf(a) * 12.0f };
-                DrawPoly(q, 3, 5.0f, (a * RAD2DEG) + 90.0f, (Color){ 220, 245, 255, 220 });
+                float angle = projectile->jitterSeed + (float)k * PI * 0.5f + projectile->progress * 8.0f;
+                Vector2 shardPos = { pos.x + cosf(angle) * 12.0f, pos.y + sinf(angle) * 12.0f };
+                DrawPoly(shardPos, 3, 5.0f, (angle * RAD2DEG) + 90.0f, (Color){ 220, 245, 255, 220 });
             }
         }
         else
         {
-            float flicker = 1.0f + sinf((p->t * 40.0f) + p->jitterSeed) * 0.08f;
+            float flicker = 1.0f + sinf((projectile->progress * 40.0f) + projectile->jitterSeed) * 0.08f;
             BeginBlendMode(BLEND_ADDITIVE);
             DrawCircleV(pos, 22 * flicker, (Color){ 255, 90, 30, 70 });
             DrawCircleV(pos, 14 * flicker, (Color){ 255, 160, 60, 180 });
@@ -543,9 +523,7 @@ void CombatDrawEffects(void)
     }
 }
 
-/* ============================================================
- *  Turn resolution
- * ============================================================ */
+/* ---------- Turn resolution ---------- */
 static void StartEnemyTurn(void)
 {
     bool useSpell = (GetRandomValue(0, 1) == 1);
@@ -612,9 +590,7 @@ static void AdvanceMessage(void)
     }
 }
 
-/* ============================================================
- *  Main combat update
- * ============================================================ */
+/* ---------- Main combat update ---------- */
 CombatResult CombatUpdate(float dt,
                           int *playerHealth, int *playerPotions,
                           int *playerScore, int *playerExp)
@@ -661,14 +637,14 @@ CombatResult CombatUpdate(float dt,
                     {
                         animType = ANIM_SPELL_FIRE; animActor = ACTOR_PLAYER;
                         pendingDamage = PLAYER_SPELL_DMG; animTimer = 0.0f;
-                        CombatSpawnFireball(playerCombatPos, enemyCombatPos);
+                        CombatSpawnFireball(PLAYER_COMBAT_POS, ENEMY_COMBAT_POS);
                         phase = PHASE_ANIM;
                     }
                     else if (menuSelection == 1)
                     {
                         animType = ANIM_SPELL_ICE; animActor = ACTOR_PLAYER;
                         pendingDamage = PLAYER_SPELL_DMG; animTimer = 0.0f;
-                        CombatSpawnIceSpell(playerCombatPos, enemyCombatPos);
+                        CombatSpawnIceSpell(PLAYER_COMBAT_POS, ENEMY_COMBAT_POS);
                         phase = PHASE_ANIM;
                     }
                     else { combatMenu = CM_MAIN; menuSelection = 0; }
@@ -729,18 +705,15 @@ CombatResult CombatUpdate(float dt,
     return currentResult;
 }
 
-/* ============================================================
- *  Combat drawing
- * ============================================================ */
+/* ---------- Combat drawing ---------- */
 static void DrawHealthBar(int x, int y, int width, int health, int maxHealth, const char *label)
 {
-    float pct = (maxHealth > 0) ? ((float)health / (float)maxHealth) : 0.0f;
-    if (pct < 0.0f) pct = 0.0f;
+    float percent = (maxHealth > 0) ? ((float)health / (float)maxHealth) : 0.0f;
+    if (percent < 0.0f) percent = 0.0f;
 
-    DrawRectangle(x, y, width, 18, (Color){ 60, 60, 60, 255 });
-    DrawRectangle(x, y, (int)(width * pct), 18, (Color){ 60, 200, 90, 255 });
-    DrawRectangleLines(x, y, width, 18, BLACK);
-
+    DrawRectangle(x, y, width, HEALTH_BAR_H, (Color){ 60, 60, 60, 255 });
+    DrawRectangle(x, y, (int)(width * percent), HEALTH_BAR_H, (Color){ 60, 200, 90, 255 });
+    DrawRectangleLines(x, y, width, HEALTH_BAR_H, BLACK);
     DrawText(TextFormat("%s HP: %d/%d", label, health, maxHealth), x, y - 20, 18, WHITE);
 }
 
@@ -749,14 +722,14 @@ static void DrawCombatAnimation(void)
     float t = animTimer / ANIM_DURATION;
     if (t > 1.0f) t = 1.0f;
 
-    Vector2 origin = (animActor == ACTOR_PLAYER) ? playerCombatPos : enemyCombatPos;
-    Vector2 target = (animActor == ACTOR_PLAYER) ? enemyCombatPos  : playerCombatPos;
+    Vector2 origin = (animActor == ACTOR_PLAYER) ? PLAYER_COMBAT_POS : ENEMY_COMBAT_POS;
+    Vector2 target = (animActor == ACTOR_PLAYER) ? ENEMY_COMBAT_POS  : PLAYER_COMBAT_POS;
 
     if (animType == ANIM_ATTACK)
     {
         float wave = (t < 0.5f) ? (t * 2.0f) : ((1.0f - t) * 2.0f);
-        Vector2 mid = Lerp2(origin, target, 0.35f);
-        Vector2 pos = Lerp2(origin, mid, wave);
+        Vector2 mid = LerpVector(origin, target, 0.35f);
+        Vector2 pos = LerpVector(origin, mid, wave);
         BeginBlendMode(BLEND_ADDITIVE);
         DrawCircleV(pos, 8.0f, (Color){ 255, 240, 200, 180 });
         DrawCircleV(pos, 4.0f, (Color){ 255, 255, 255, 255 });
@@ -767,15 +740,11 @@ static void DrawCombatAnimation(void)
 void CombatDraw(int playerHealth, int maxPlayerHealth,
                 int playerPotions, int playerScore)
 {
-    /* ---------- Background: seamless, no darkening overlay ---------- */
     BackgroundsDraw(currentBackground);
 
-    /* ---------- HUD text ---------- */
     DrawText(TextFormat("Score: %d", playerScore), 20, 20, 20, YELLOW);
-    DrawText(BackgroundsGetName(currentBackground), 20, 44, 14,
-             (Color){ 220, 220, 220, 220 });
+    DrawText(BackgroundsGetName(currentBackground), 20, 44, 14, (Color){ 220, 220, 220, 220 });
 
-    /* ---------- Combatant sprites ---------- */
     {
         float lungeT = 0.0f;
         if (phase == PHASE_ANIM)
@@ -794,33 +763,25 @@ void CombatDraw(int playerHealth, int maxPlayerHealth,
             combatTime + 0.7f
         };
 
-        CombatantDrawKnight(playerCombatPos, true,  playerPose);
-        CombatantDrawEnemy(enemy.name, enemyCombatPos, false, enemyPose);
+        CombatantDrawKnight(PLAYER_COMBAT_POS, true,  playerPose);
+        CombatantDrawEnemy(enemy.name, ENEMY_COMBAT_POS, false, enemyPose);
     }
 
-    /* ---------- Health bars: level, along the bottom ---------- */
     {
-        const int barW = 300;
-        const int barH = 18;
-        const int barY = 600 - 40;             /* 40px from bottom edge */
-        const int gap  = 40;
+        int totalWidth = HEALTH_BAR_W * 2 + HEALTH_BAR_GAP;
+        int startX = (SCREEN_WIDTH - totalWidth) / 2;
 
-        int totalW = barW * 2 + gap;
-        int startX = (800 - totalW) / 2;
-
-        DrawHealthBar(startX,             barY, barW,
+        DrawHealthBar(startX, HEALTH_BAR_Y, HEALTH_BAR_W,
                       playerHealth, maxPlayerHealth, "Player");
-        DrawHealthBar(startX + barW + gap, barY, barW,
+        DrawHealthBar(startX + HEALTH_BAR_W + HEALTH_BAR_GAP, HEALTH_BAR_Y, HEALTH_BAR_W,
                       enemy.health, enemy.maxHealth, "Enemy");
     }
 
-    /* ---------- Effects ---------- */
     if (phase == PHASE_ANIM && animType == ANIM_ATTACK)
         DrawCombatAnimation();
 
     CombatDrawEffects();
 
-    /* ---------- Menus: centered, width hugs the text ---------- */
     if (phase == PHASE_MENU)
     {
         const char *mainOptions[4]  = { "Attack", "Spell", "Items", "Flee" };
@@ -833,54 +794,50 @@ void CombatDraw(int playerHealth, int maxPlayerHealth,
         if (combatMenu == CM_ITEM)  { options = itemOptions;  count = 2; }
 
         const int fontSize = 20;
-        const int lineH    = 28;
-        const int padX     = 18;
-        const int padY     = 14;
-        const int prefixW  = MeasureText("> ", fontSize);
+        const int lineHeight = 28;
+        const int paddingX = 18;
+        const int paddingY = 14;
+        const int prefixWidth = MeasureText("> ", fontSize);
 
-        /* Width = widest option (plus the "> " prefix) + padding */
-        int maxTextW = 0;
+        int maxTextWidth = 0;
         for (int i = 0; i < count; i++)
         {
-            int w = MeasureText(options[i], fontSize);
-            if (w > maxTextW) maxTextW = w;
+            int width = MeasureText(options[i], fontSize);
+            if (width > maxTextWidth) maxTextWidth = width;
         }
 
-        int boxW = prefixW + maxTextW + padX * 2;
-        int boxH = lineH * count + padY * 2;
-        int boxX = (800 - boxW) / 2;
-        int boxY = (600 - boxH) / 2;
+        int boxWidth = prefixWidth + maxTextWidth + paddingX * 2;
+        int boxHeight = lineHeight * count + paddingY * 2;
+        int boxX = (SCREEN_WIDTH - boxWidth) / 2;
+        int boxY = (SCREEN_HEIGHT - boxHeight) / 2;
 
-        DrawRectangle(boxX, boxY, boxW, boxH, (Color){ 0, 0, 0, 190 });
-        DrawRectangleLines(boxX, boxY, boxW, boxH, (Color){ 220, 220, 220, 200 });
+        DrawRectangle(boxX, boxY, boxWidth, boxHeight, (Color){ 0, 0, 0, 190 });
+        DrawRectangleLines(boxX, boxY, boxWidth, boxHeight, (Color){ 220, 220, 220, 200 });
 
         for (int i = 0; i < count; i++)
         {
-            Color c = (i == menuSelection) ? YELLOW : WHITE;
+            Color color = (i == menuSelection) ? YELLOW : WHITE;
             const char *prefix = (i == menuSelection) ? "> " : "  ";
             DrawText(TextFormat("%s%s", prefix, options[i]),
-                     boxX + padX, boxY + padY + i * lineH, fontSize, c);
+                     boxX + paddingX, boxY + paddingY + i * lineHeight, fontSize, color);
         }
     }
 
-    /* ---------- Message box: dedicated slot at the top-center ----------
-     * Anchored just below the score/background label so it never
-     * overlaps the centered menu or the bottom health bars. */
     if (phase == PHASE_MESSAGE)
     {
         const int fontSize = 20;
-        int textW = MeasureText(message, fontSize);
-        int boxW  = textW + 60;
-        if (boxW < 320) boxW = 320;
-        if (boxW > 760) boxW = 760;
+        int textWidth = MeasureText(message, fontSize);
+        int boxWidth = textWidth + 60;
+        if (boxWidth < 320) boxWidth = 320;
+        if (boxWidth > 760) boxWidth = 760;
 
-        int boxH = 52;
-        int bx = (800 - boxW) / 2;
-        int by = 76;                            /* just under HUD text */
+        int boxHeight = 52;
+        int boxX = (SCREEN_WIDTH - boxWidth) / 2;
+        int boxY = 76;
 
-        DrawRectangle(bx, by, boxW, boxH, (Color){ 0, 0, 0, 210 });
-        DrawRectangleLines(bx, by, boxW, boxH, WHITE);
-        DrawText(message, bx + (boxW - textW) / 2, by + (boxH - fontSize) / 2,
-                 fontSize, WHITE);
+        DrawRectangle(boxX, boxY, boxWidth, boxHeight, (Color){ 0, 0, 0, 210 });
+        DrawRectangleLines(boxX, boxY, boxWidth, boxHeight, WHITE);
+        DrawText(message, boxX + (boxWidth - textWidth) / 2,
+                 boxY + (boxHeight - fontSize) / 2, fontSize, WHITE);
     }
 }

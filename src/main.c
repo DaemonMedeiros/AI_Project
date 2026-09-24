@@ -1,9 +1,5 @@
 /* ============================================================
  * main.c - Simple Turn-Based Fantasy RPG
- *
- * World terrain lives in terrain.c. Combat (turn logic + spell
- * VFX) lives in combat.c. Battle backgrounds and combatant
- * sprites live in backgrounds.c / combatants.c.
  * ============================================================ */
 #include "raylib.h"
 #include "raymath.h"
@@ -17,9 +13,7 @@
 #include <string.h>
 #include <math.h>
 
-/* ------------------------------------------------------------
- *  Constants
- * ---------------------------------------------------------- */
+/* ---------- Constants ---------- */
 #define SCREEN_WIDTH   800
 #define SCREEN_HEIGHT  600
 
@@ -39,9 +33,7 @@
 #define POTION_RADIUS         8.0f
 #define POTION_COLLECT_RADIUS 20.0f
 
-/* ------------------------------------------------------------
- *  Types
- * ---------------------------------------------------------- */
+/* ---------- Types ---------- */
 typedef enum { GS_WORLD, GS_COMBAT, GS_GAMEOVER } GameState;
 
 typedef struct {
@@ -59,21 +51,16 @@ typedef struct {
     bool    collected;
 } Potion;
 
-/* ------------------------------------------------------------
- *  Global state
- * ---------------------------------------------------------- */
+/* ---------- Global state ---------- */
 static Potion potions[MAX_POTIONS_WORLD];
 static Player player;
 
 static GameState state;
 static float     encounterCooldown;
 static Camera2D  camera;
+static float     worldTime = 0.0f;
 
-static float worldTime = 0.0f;
-
-/* ------------------------------------------------------------
- *  Forward declarations
- * ---------------------------------------------------------- */
+/* ---------- Forward declarations ---------- */
 static void ResetGame(void);
 static void SpawnPotions(void);
 static void UpdateWorld(float dt);
@@ -81,16 +68,14 @@ static void DrawWorld(void);
 static void UpdateGameOver(void);
 static void DrawGameOver(void);
 
-static float Clampf(float v, float lo, float hi)
+static float ClampFloat(float value, float low, float high)
 {
-    if (v < lo) return lo;
-    if (v > hi) return hi;
-    return v;
+    if (value < low) return low;
+    if (value > high) return high;
+    return value;
 }
 
-/* ------------------------------------------------------------
- *  main
- * ---------------------------------------------------------- */
+/* ---------- main ---------- */
 int main(void)
 {
     InitWindow(SCREEN_WIDTH, SCREEN_HEIGHT, "Simple Turn-Based Fantasy RPG");
@@ -114,18 +99,18 @@ int main(void)
 
             case GS_COMBAT:
             {
-                CombatResult r = CombatUpdate(dt,
-                                              &player.health,
-                                              &player.potions,
-                                              &player.score,
-                                              &player.exp);
-                if (r == COMBAT_RESULT_VICTORY || r == COMBAT_RESULT_FLED)
+                CombatResult result = CombatUpdate(dt,
+                                                   &player.health,
+                                                   &player.potions,
+                                                   &player.score,
+                                                   &player.exp);
+                if (result == COMBAT_RESULT_VICTORY || result == COMBAT_RESULT_FLED)
                 {
                     CombatClearEffects();
                     state = GS_WORLD;
                     encounterCooldown = ENCOUNTER_CHECK_INTERVAL;
                 }
-                else if (r == COMBAT_RESULT_DEFEAT)
+                else if (result == COMBAT_RESULT_DEFEAT)
                 {
                     CombatClearEffects();
                     state = GS_GAMEOVER;
@@ -165,9 +150,7 @@ int main(void)
     return 0;
 }
 
-/* ------------------------------------------------------------
- *  Setup / reset
- * ---------------------------------------------------------- */
+/* ---------- Setup / reset ---------- */
 static void ResetGame(void)
 {
     SpawnPotions();
@@ -208,9 +191,7 @@ static void SpawnPotions(void)
     }
 }
 
-/* ------------------------------------------------------------
- *  World update
- * ---------------------------------------------------------- */
+/* ---------- World update ---------- */
 static void UpdateWorld(float dt)
 {
     Vector2 inputDir = { 0.0f, 0.0f };
@@ -244,8 +225,8 @@ static void UpdateWorld(float dt)
     }
 
     player.position = Vector2Add(player.position, Vector2Scale(player.velocity, dt));
-    player.position.x = Clampf(player.position.x, PLAYER_RADIUS, WORLD_WIDTH  - PLAYER_RADIUS);
-    player.position.y = Clampf(player.position.y, PLAYER_RADIUS, WORLD_HEIGHT - PLAYER_RADIUS);
+    player.position.x = ClampFloat(player.position.x, PLAYER_RADIUS, WORLD_WIDTH  - PLAYER_RADIUS);
+    player.position.y = ClampFloat(player.position.y, PLAYER_RADIUS, WORLD_HEIGHT - PLAYER_RADIUS);
 
     for (int i = 0; i < MAX_POTIONS_WORLD; i++)
     {
@@ -274,15 +255,13 @@ static void UpdateWorld(float dt)
     float followT = 1.0f - expf(-CAMERA_FOLLOW_SPEED * dt);
     camera.target = Vector2Lerp(camera.target, player.position, followT);
 
-    float halfW = SCREEN_WIDTH  / 2.0f;
-    float halfH = SCREEN_HEIGHT / 2.0f;
-    camera.target.x = Clampf(camera.target.x, halfW, WORLD_WIDTH  - halfW);
-    camera.target.y = Clampf(camera.target.y, halfH, WORLD_HEIGHT - halfH);
+    float halfWidth  = SCREEN_WIDTH  / 2.0f;
+    float halfHeight = SCREEN_HEIGHT / 2.0f;
+    camera.target.x = ClampFloat(camera.target.x, halfWidth, WORLD_WIDTH  - halfWidth);
+    camera.target.y = ClampFloat(camera.target.y, halfHeight, WORLD_HEIGHT - halfHeight);
 }
 
-/* ------------------------------------------------------------
- *  World drawing
- * ---------------------------------------------------------- */
+/* ---------- World drawing ---------- */
 static void DrawPotion(Vector2 pos)
 {
     DrawCircleV(pos, POTION_RADIUS, RED);
@@ -302,13 +281,9 @@ static void DrawWorld(void)
         for (int i = 0; i < MAX_POTIONS_WORLD; i++)
             if (!potions[i].collected) DrawPotion(potions[i].position);
 
-        /* Player knight in the exploration view */
         {
             bool facingRight = (cosf(player.facingAngle) >= 0.0f);
 
-            /* Shadow sits under the knight's feet. The knight is drawn
-             * with his feet ~34px below the sprite anchor (which is
-             * player.position). */
             DrawEllipse((int)player.position.x,
                         (int)(player.position.y + 36),
                         16.0f, 5.0f, (Color){ 0, 0, 0, 100 });
@@ -320,9 +295,7 @@ static void DrawWorld(void)
     EndMode2D();
 }
 
-/* ------------------------------------------------------------
- *  Game over
- * ---------------------------------------------------------- */
+/* ---------- Game over ---------- */
 static void UpdateGameOver(void)
 {
     if (IsKeyPressed(KEY_ENTER)) ResetGame();
