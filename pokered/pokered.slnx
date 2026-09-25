@@ -1,0 +1,7 @@
+<Solution>
+  <Configurations>
+    <Platform Name="x64" />
+    <Platform Name="x86" />
+  </Configurations>
+  <Project Path="pokered.vcxproj" Id="626e4968-7087-4d12-aef1-8b45da601caf" />
+</Solution>
