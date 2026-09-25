@@ -1,13 +1,17 @@
 /* ============================================================
  * terrain.h - World terrain generation and rendering
  *
- * The world is divided into four zones (one per quarter of the
- * map), each with its own biome palette and decoration:
- *   - Forest   (west)
- *   - Desert   (center-south)
- *   - Cliffside (center-north)
- *   - Snowy    (east)
- * A single winding path threads through all four.
+ * The world is divided into four biome zones, arranged as a
+ * 2x2 grid of quadrants:
+ *   - Forest    (NW)
+ *   - Snowy     (NE)
+ *   - Desert    (SW)
+ *   - Cliffside (SE)
+ * Zones blend smoothly into their neighbours (no hard borders,
+ * organic noise-warped boundaries) and each keeps its own set
+ * of decorations that thin out gradually near the edges instead
+ * of stopping abruptly. A single winding path loops through all
+ * four zones.
  * ============================================================ */
 #ifndef TERRAIN_H
 #define TERRAIN_H
@@ -32,7 +36,9 @@
  *   NE quadrant: Snowy
  *   SW quadrant: Desert
  *   SE quadrant: Cliffside
- * Zone is determined by player position. */
+ * TerrainGetZoneAt reports the dominant zone at a point, but
+ * visually and decoratively the zones blend across a wide,
+ * noise-warped transition band rather than a hard line. */
 typedef enum {
     ZONE_FOREST = 0,
     ZONE_SNOWY,

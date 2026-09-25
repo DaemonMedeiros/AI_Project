@@ -21,6 +21,11 @@ static const Vector2 ENEMY_COMBAT_POS  = { 600, 470 };
 /* Combat sprites render at 2x their base texture size. */
 #define COMBAT_SPRITE_SCALE  2.0f
 
+/* Fraction of the sprite's on-screen drawn height at which spell
+ * VFX are centered. 0.75 = 3/4 of the way up from the feet,
+ * i.e. roughly the chest / upper body. */
+#define COMBAT_HIT_HEIGHT_FRACTION  0.75f
+
 #define SCREEN_WIDTH   800
 #define SCREEN_HEIGHT  600
 #define HEALTH_BAR_W   300
@@ -53,6 +58,46 @@ static AfterMessage afterMessage;
 static CombatResult currentResult;
 static BackgroundType currentBackground = BG_FOREST_DAY;
 static float combatTime = 0.0f;
+
+/* ---------- Hit-point helpers ----------
+ * Combat sprites are drawn feet-anchored: the given y is the
+ * BOTTOM of the sprite, and the sprite extends upward by
+ * (baseHeight * scale) pixels.
+ *
+ * The VFX origin/target must therefore sit above the feet anchor.
+ * FeetToHitPos() walks up from the feet by a fraction of the
+ * sprite's full on-screen drawn height. With fraction = 0.75 the
+ * point lands 3/4 of the way up the texture, near the head/chest. */
+static Vector2 FeetToHitPos(Vector2 feetPos, float drawnHeight)
+{
+    return (Vector2){
+        feetPos.x,
+        feetPos.y - drawnHeight * COMBAT_HIT_HEIGHT_FRACTION
+    };
+}
+
+/* On-screen height of each combat sprite (base height * scale).
+ * These are the same values the draw calls use, so the hit point
+ * always lines up with the rendered sprite. */
+static float PlayerDrawnHeight(void)
+{
+    return CombatantGetKnightBaseHeight() * COMBAT_SPRITE_SCALE;
+}
+
+static float EnemyDrawnHeight(void)
+{
+    return CombatantGetWolfBaseHeight() * COMBAT_SPRITE_SCALE;
+}
+
+static Vector2 PlayerHitPos(void)
+{
+    return FeetToHitPos(PLAYER_COMBAT_POS, PlayerDrawnHeight());
+}
+
+static Vector2 EnemyHitPos(void)
+{
+    return FeetToHitPos(ENEMY_COMBAT_POS, EnemyDrawnHeight());
+}
 
 /* ---------- Particle system ---------- */
 typedef enum {
@@ -642,14 +687,14 @@ CombatResult CombatUpdate(float dt,
                     {
                         animType = ANIM_SPELL_FIRE; animActor = ACTOR_PLAYER;
                         pendingDamage = PLAYER_SPELL_DMG; animTimer = 0.0f;
-                        CombatSpawnFireball(PLAYER_COMBAT_POS, ENEMY_COMBAT_POS);
+                        CombatSpawnFireball(PlayerHitPos(), EnemyHitPos());
                         phase = PHASE_ANIM;
                     }
                     else if (menuSelection == 1)
                     {
                         animType = ANIM_SPELL_ICE; animActor = ACTOR_PLAYER;
                         pendingDamage = PLAYER_SPELL_DMG; animTimer = 0.0f;
-                        CombatSpawnIceSpell(PLAYER_COMBAT_POS, ENEMY_COMBAT_POS);
+                        CombatSpawnIceSpell(PlayerHitPos(), EnemyHitPos());
                         phase = PHASE_ANIM;
                     }
                     else { combatMenu = CM_MAIN; menuSelection = 0; }
@@ -722,26 +767,6 @@ static void DrawHealthBar(int x, int y, int width, int health, int maxHealth, co
     DrawText(TextFormat("%s HP: %d/%d", label, health, maxHealth), x, y - 20, 18, WHITE);
 }
 
-static void DrawCombatAnimation(void)
-{
-    float t = animTimer / ANIM_DURATION;
-    if (t > 1.0f) t = 1.0f;
-
-    Vector2 origin = (animActor == ACTOR_PLAYER) ? PLAYER_COMBAT_POS : ENEMY_COMBAT_POS;
-    Vector2 target = (animActor == ACTOR_PLAYER) ? ENEMY_COMBAT_POS  : PLAYER_COMBAT_POS;
-
-    if (animType == ANIM_ATTACK)
-    {
-        float wave = (t < 0.5f) ? (t * 2.0f) : ((1.0f - t) * 2.0f);
-        Vector2 mid = LerpVector(origin, target, 0.35f);
-        Vector2 pos = LerpVector(origin, mid, wave);
-        BeginBlendMode(BLEND_ADDITIVE);
-        DrawCircleV(pos, 8.0f, (Color){ 255, 240, 200, 180 });
-        DrawCircleV(pos, 4.0f, (Color){ 255, 255, 255, 255 });
-        EndBlendMode();
-    }
-}
-
 void CombatDraw(int playerHealth, int maxPlayerHealth,
                 int playerPotions, int playerScore)
 {
@@ -781,9 +806,6 @@ void CombatDraw(int playerHealth, int maxPlayerHealth,
         DrawHealthBar(startX + HEALTH_BAR_W + HEALTH_BAR_GAP, HEALTH_BAR_Y, HEALTH_BAR_W,
                       enemy.health, enemy.maxHealth, "Wolf");
     }
-
-    if (phase == PHASE_ANIM && animType == ANIM_ATTACK)
-        DrawCombatAnimation();
 
     CombatDrawEffects();
 

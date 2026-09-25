@@ -39,6 +39,10 @@
  * the player's collision point. */
 #define WORLD_SPRITE_SCALE  1.0f
 
+/* Overworld walk animation: 4 frames per row. */
+#define WALK_FRAME_COUNT    4
+#define WALK_FRAME_TIME     0.12f   /* seconds per frame */
+
 /* ---------- Types ---------- */
 typedef enum { GS_WORLD, GS_COMBAT, GS_GAMEOVER } GameState;
 
@@ -65,6 +69,12 @@ static GameState state;
 static float     encounterCooldown;
 static Camera2D  camera;
 static float     worldTime = 0.0f;
+
+/* Overworld walk animation state */
+static int   walkFrame        = 0;
+static float walkFrameTimer   = 0.0f;
+static float walkAnimTime     = 0.0f;   /* only advances while moving */
+static KnightDirection playerDirection = KNIGHT_DIR_DOWN;
 
 /* ---------- Forward declarations ---------- */
 static void ResetGame(void);
@@ -179,6 +189,12 @@ static void ResetGame(void)
     camera.rotation = 0.0f;
     camera.zoom     = 1.0f;
 
+    /* Reset walk animation */
+    walkFrame        = 0;
+    walkFrameTimer   = 0.0f;
+    walkAnimTime     = 0.0f;
+    playerDirection  = KNIGHT_DIR_DOWN;
+
     state = GS_WORLD;
 }
 
@@ -215,6 +231,13 @@ static void UpdateWorld(float dt)
         inputDir = Vector2Normalize(inputDir);
         player.facingAngle = atan2f(inputDir.y, inputDir.x);
 
+        /* Pick the spritesheet row from the dominant input axis.
+         * Vertical wins ties so diagonal movement reads clearly. */
+        if (fabsf(inputDir.y) >= fabsf(inputDir.x))
+            playerDirection = (inputDir.y < 0.0f) ? KNIGHT_DIR_UP : KNIGHT_DIR_DOWN;
+        else
+            playerDirection = (inputDir.x < 0.0f) ? KNIGHT_DIR_LEFT : KNIGHT_DIR_RIGHT;
+
         player.velocity = Vector2Add(player.velocity, Vector2Scale(inputDir, PLAYER_ACCEL * dt));
         float speed = Vector2Length(player.velocity);
         if (speed > PLAYER_MAX_SPEED)
@@ -230,6 +253,25 @@ static void UpdateWorld(float dt)
             player.velocity = Vector2Scale(player.velocity, newSpeed / speed);
         }
         else player.velocity = (Vector2){ 0.0f, 0.0f };
+    }
+
+    /* Advance the walk cycle only while the player is actually
+     * moving. When stopped, freeze on the rest frame so the
+     * knight stands still instead of mid-stride. */
+    if (hasInput && Vector2Length(player.velocity) > 5.0f)
+    {
+        walkAnimTime   += dt;
+        walkFrameTimer += dt;
+        if (walkFrameTimer >= WALK_FRAME_TIME)
+        {
+            walkFrameTimer -= WALK_FRAME_TIME;
+            walkFrame = (walkFrame + 1) % WALK_FRAME_COUNT;
+        }
+    }
+    else
+    {
+        walkFrame      = 0;
+        walkFrameTimer = 0.0f;
     }
 
     player.position = Vector2Add(player.position, Vector2Scale(player.velocity, dt));
@@ -290,8 +332,6 @@ static void DrawWorld(void)
             if (!potions[i].collected) DrawPotion(potions[i].position);
 
         {
-            bool facingRight = (cosf(player.facingAngle) >= 0.0f);
-
             /* Shadow sits directly under the feet. */
             DrawEllipse((int)player.position.x,
                         (int)(player.position.y + 2),
@@ -305,8 +345,8 @@ static void DrawWorld(void)
                 player.position.y + CombatantGetKnightBaseHeight() * WORLD_SPRITE_SCALE * 0.5f
             };
 
-            CombatantPose pose = { 0.0f, worldTime };
-            CombatantDrawKnight(drawPos, facingRight, pose, WORLD_SPRITE_SCALE);
+            CombatantDrawKnightAnimated(drawPos, playerDirection,
+                                        walkFrame, WORLD_SPRITE_SCALE);
         }
 
     EndMode2D();
