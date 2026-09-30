@@ -43,6 +43,7 @@ typedef enum {
     BATTLE_PHASE_END,
 } BattlePhase;
 
+/* 0=Fight(top-left), 1=Item(top-right), 2=PKMN(bottom-left), 3=Run(bottom-right) */
 typedef enum {
     BATTLE_MENU_FIGHT = 0,
     BATTLE_MENU_ITEM,
@@ -64,7 +65,7 @@ typedef struct {
     uint8_t  type2;
     uint8_t  moves[BATTLE_NUM_MOVES];
     uint8_t  pp[BATTLE_NUM_MOVES];
-    char     name[12];
+    char     name[16];    /* widened from 12 to hold every Gen 1 name */
     int      fainted;
     int      is_player;
 } BattleMon;
@@ -84,6 +85,14 @@ typedef struct {
     int escape_attempts;
     int battle_result;    /* 0 = ongoing, 1 = win, 2 = lose, 3 = ran */
     int return_to_overworld;
+
+    /* Edge-detection state for menu input (30 Hz logic vs 60 Hz render) */
+    int prev_up;
+    int prev_down;
+    int prev_left;
+    int prev_right;
+    int prev_select;
+    int prev_cancel;
 } BattleState;
 
 /* One-time init */
@@ -95,7 +104,9 @@ void battle_start_wild(BattleState* bs, uint8_t enemy_species, uint8_t enemy_lev
 /* Logic tick (call once per LOGIC_DT while active) */
 void battle_update(BattleState* bs, Player* player);
 
-/* Draw inside an active BeginTextureMode(target) block at 160x144 */
+/* Draw inside an active BeginTextureMode(target) block at 160x144.
+ * Only composites a pre-rendered layer, so it is safe to call from
+ * inside another BeginTextureMode. */
 void battle_render(const BattleState* bs);
 
 /* Helpers */
