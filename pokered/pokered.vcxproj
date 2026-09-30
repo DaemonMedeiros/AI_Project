@@ -151,6 +151,7 @@
     </Manifest>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClCompile Include="battle.c" />
     <ClCompile Include="data_tables.c" />
     <ClCompile Include="fade.c" />
     <ClCompile Include="main.c" />
@@ -160,8 +161,10 @@
     <ClCompile Include="parsers.c" />
     <ClCompile Include="player.c" />
     <ClCompile Include="render.c" />
+    <ClCompile Include="wild_encounter.c" />
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="battle.h" />
     <ClInclude Include="data_tables.h" />
     <ClInclude Include="fade.h" />
     <ClInclude Include="gb.h" />
@@ -172,6 +175,7 @@
     <ClInclude Include="player.h" />
     <ClInclude Include="render.h" />
     <ClInclude Include="types.h" />
+    <ClInclude Include="wild_encounter.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">
