@@ -292,6 +292,20 @@ int load_map(ActiveMap* am, const char* map_name,
             n->tile_y >= am->map.height * 2)
             n->active = 0;
     }
+    
+    char map_pascal[64];
+    build_map_pascal(map_name, map_pascal, sizeof(map_pascal));
+
+    char script_path[256];
+    snprintf(script_path, sizeof(script_path), "%s/scripts/%s.asm",
+        REPO_ROOT, map_pascal);
+
+    char text_path[256];
+    snprintf(text_path, sizeof(text_path), "%s/text/%s.asm",
+        REPO_ROOT, map_pascal);
+
+    parse_scripts(script_path, text_path, &am->texts);
+    TraceLog(LOG_INFO, "  Loaded %d text entries", am->texts.count);
 
     TraceLog(LOG_INFO, "Loaded map %s (%dx%d) tileset=%s blocks=%d collision=%d conns=%d warps=%d npcs=%d prev=%s",
         map_name, w, h, am->tileset_stem, am->num_blocks, am->num_collision,
@@ -407,4 +421,13 @@ Direction choose_forced_dir(ActiveMap* am, int tx, int ty) {
     if (can_walk_tile(am, tx + 1, ty)) return DIR_RIGHT;
     if (can_walk_tile(am, tx - 1, ty)) return DIR_LEFT;
     return DIR_DOWN;
+}
+
+NPC* npc_at(ActiveMap* am, int nx, int ny) {
+    for (int i = 0; i < am->num_npcs; i++) {
+        NPC* n = &am->npcs[i];
+        if (!n->active) continue;
+        if (n->tile_x == nx && n->tile_y == ny) return n;
+    }
+    return NULL;
 }

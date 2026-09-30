@@ -17,6 +17,13 @@ int  parse_objects(const char* objects_path, NPC* out, int max);
 uint8_t parse_movement_byte1(const char* s);
 uint8_t parse_movement_byte2(const char* s);
 
+void parse_fly_warps(const char* path, FlyWarpTable* out);
+int  lookup_fly_warp(const FlyWarpTable* table, const char* map_name, int* out_x, int* out_y);
+
+void build_map_pascal(const char* map_const, char* out, size_t out_size);
+void parse_scripts(const char* scripts_path, const char* text_path, TextTable* out);
+const char* lookup_text(const struct TextTable* table, const char* symbol);
+
 #define MOVE_WALK        0xFE
 #define MOVE_STAY        0xFF
 #define MOVE_ANY_DIR     0x00

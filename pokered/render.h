@@ -13,6 +13,7 @@ Color decode_2bpp_sprite_pixel(uint8_t lo, uint8_t hi, int bit, uint8_t reg,
 void decode_tileset(const char* path, Tileset* ts, uint8_t reg,
     int is_sprite, int pal_id);
 Texture2D decode_1bpp(const char* path);
+Texture2D decode_1bpp_sheet(const char* path, int num_tiles);
 
 Rectangle sprite_quadrant_src(const Tileset* ts, uint8_t tid, int flip);
 void draw_sprite(Tileset* ts, const uint8_t* tiles, int flip, int px, int py);

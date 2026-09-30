@@ -39,4 +39,6 @@ MapConnection* check_connection(ActiveMap* am, int nx, int ny);
 void place_player_at_warp(ActiveMap* am, Player* p, WarpEvent* dst);
 Direction choose_forced_dir(ActiveMap* am, int tx, int ty);
 
+NPC* npc_at(ActiveMap* am, int nx, int ny);
+
 #endif

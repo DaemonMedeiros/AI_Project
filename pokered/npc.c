@@ -6,7 +6,7 @@
 #include "parsers.h"
 
 void update_npc(ActiveMap* am, NPC* n, int idx, Player* player) {
-    if (!n->active) return;
+    if (!n->active || n->frozen) return;
     int player_walk_counter = player->walk_counter;
 
     if (n->movement_status == MSTAT_READY) {
