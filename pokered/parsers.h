@@ -23,6 +23,7 @@ int  lookup_fly_warp(const FlyWarpTable* table, const char* map_name, int* out_x
 void build_map_pascal(const char* map_const, char* out, size_t out_size);
 void parse_scripts(const char* scripts_path, const char* text_path, TextTable* out);
 const char* lookup_text(const struct TextTable* table, const char* symbol);
+int count_text_pages(const char* text);
 
 #define MOVE_WALK        0xFE
 #define MOVE_STAY        0xFF

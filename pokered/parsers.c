@@ -377,7 +377,7 @@ static void emit_token(const char* tok, size_t toklen,
     if (toklen == 6 && memcmp(tok, "PLAYER", 6) == 0) { EMIT(0x03); return; }
     if (toklen == 5 && memcmp(tok, "RIVAL", 5) == 0) { EMIT(0x04); return; }
     if (toklen == 4 && memcmp(tok, "LINE", 4) == 0) { EMIT('\n'); return; }
-    if (toklen == 4 && memcmp(tok, "PARA", 4) == 0) { EMIT('\n'); EMIT('\n'); return; }
+    if (toklen == 4 && memcmp(tok, "PARA", 4) == 0) { EMIT(0x08); return; }
     if (toklen == 4 && memcmp(tok, "CONT", 4) == 0) { EMIT(0x06); return; }
     if (toklen == 4 && memcmp(tok, "NEXT", 4) == 0) { EMIT('\n'); return; }
     if (toklen == 4 && memcmp(tok, "PAGE", 4) == 0) { EMIT(0x05); return; } /* page break */
@@ -523,13 +523,19 @@ void parse_scripts(const char* scripts_path, const char* text_path,
             }
             const char* t = tbuf;
             while (*t == ' ' || *t == '\t') t++;
+            int is_text = (strncmp(t, "text ", 5) == 0);
             int is_line = (strncmp(t, "line ", 5) == 0);
             int is_para = (strncmp(t, "para ", 5) == 0);
-            int is_text = (strncmp(t, "text ", 5) == 0);
-            if (is_line || is_para || is_text) {
-                if ((is_line || is_para) && used > 0) {
-                    if (used + 1 < sizeof(te->text)) te->text[used++] = '\n';
-                    if (is_para && used + 1 < sizeof(te->text)) te->text[used++] = '\n';
+            int is_cont = (strncmp(t, "cont ", 5) == 0);
+
+            if (is_text || is_line || is_para || is_cont) {
+                if (used > 0) {
+                    if (is_line || is_cont) {
+                        if (used + 1 < sizeof(te->text)) te->text[used++] = '\n';
+                    }
+                    else if (is_para) {
+                        if (used + 1 < sizeof(te->text)) te->text[used++] = 0x08;
+                    }
                 }
                 extract_text_line(tbuf, te->text, sizeof(te->text), &used);
             }
@@ -543,6 +549,39 @@ void parse_scripts(const char* scripts_path, const char* text_path,
         }
         fclose(tf);
     }
+}
+
+/* Returns the number of pages needed to display `text` in a 2-line box.
+   A page ends at a \n that would push us past 2 rows, at a <PAGE> (0x05),
+   or at <CONT> (0x06), whichever comes first. The trailing partial page
+   always counts. */
+int count_text_pages(const char* text) {
+    int pages = 0;
+    int lines_this_page = 0;
+    int any_content_this_page = 0;
+
+    for (const char* s = text; *s; s++) {
+        unsigned char ch = (unsigned char)*s;
+
+        if (ch == 0x05 || ch == 0x06 || ch == 0x08) {
+            if (any_content_this_page) { pages++; any_content_this_page = 0; }
+            lines_this_page = 0;
+            continue;
+        }
+        if (ch == '\n') {
+            lines_this_page++;
+            if (lines_this_page >= 2) {
+                pages++;
+                lines_this_page = 0;
+                any_content_this_page = 0;
+            }
+            continue;
+        }
+        any_content_this_page = 1;
+    }
+    if (any_content_this_page) pages++;
+    if (pages == 0) pages = 1;
+    return pages;
 }
 
 const char* lookup_text(const TextTable* table, const char* symbol) {

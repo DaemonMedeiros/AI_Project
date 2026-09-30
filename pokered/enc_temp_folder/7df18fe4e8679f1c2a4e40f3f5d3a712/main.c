@@ -343,7 +343,7 @@ int main(void) {
                         active_text[sizeof(active_text) - 1] = 0;
                         active_text_active = 1;
                         active_text_page = 0;
-                        active_text_last_page = count_text_pages(active_text) - 1;
+                        active_text_last_page = count_text_pages(active_text);
                         z_released_since_open = 0;
                         active_text_npc = target;
 
