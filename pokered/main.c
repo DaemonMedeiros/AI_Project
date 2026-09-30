@@ -1,4 +1,3 @@
-
 #include "raylib.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -14,6 +13,8 @@
 #include "npc.h"
 #include "fade.h"
 #include "parsers.h"
+#include "wild_encounter.h"   /* ADDED */
+#include "battle.h"           /* ADDED */
 
 static const char* priority_shader_fs =
 "#version 330\n"
@@ -258,6 +259,11 @@ int main(void) {
     int active_text_active = 0;
     NPC* active_text_npc = NULL;
     int interact_key_was_down = 0;
+    /* -------- ADDED: battle + wild encounter state -------- */
+    BattleState battle;
+    battle_init(&battle);
+    wild_encounter_init();
+    /* ------------------------------------------------------ */
 
     int counter1 = 0, counter2 = 0;
     float logic_accumulator = 0.0f;
@@ -272,6 +278,20 @@ int main(void) {
         anim_accumulator += frame_time;
 
         while (logic_accumulator >= LOGIC_DT) {
+            /* -------- ADDED: if a battle is active, tick it and
+             *          skip the entire overworld logic -------- */
+            if (battle.active) {
+                battle_update(&battle, &player);
+                if (battle.return_to_overworld) {
+                    battle.return_to_overworld = 0;
+                    /* 3 safe steps after a battle, like the ASM */
+                    grant_battle_cooldown(3);
+                }
+                logic_accumulator -= LOGIC_DT;
+                continue;
+            }
+            /* ------------------------------------------------- */
+
             if (player.warp_cooldown > 0) player.warp_cooldown--;
 
             if (fade.phase != FADE_NONE) {
@@ -379,6 +399,16 @@ int main(void) {
                                 REG_OBP0, current.sgb_pals[0]);
                             load_npc_sprites(&current, npc_ts, REG_OBP0,
                                 current.sgb_pals[0]);
+                        }
+                        else {
+                            /* -------- ADDED: wild encounter check -------- */
+                            uint8_t wild_species = 0, wild_level = 0;
+                            if (try_wild_encounter(&current, &player,
+                                &wild_species, &wild_level)) {
+                                battle_start_wild(&battle,
+                                    wild_species, wild_level);
+                            }
+                            /* --------------------------------------------- */
                         }
                     }
                 }
@@ -851,7 +881,12 @@ int main(void) {
         SetShaderValue(priority_shader, loc_bg_color, &bg_col_f, SHADER_UNIFORM_VEC3);
 
         BeginTextureMode(target);
-        if (fade.hide_world) {
+        /* -------- ADDED: if a battle is active, render the battle
+         *          screen instead of the overworld -------- */
+        if (battle.active) {
+            battle_render(&battle);
+        }
+        else if (fade.hide_world) {
             ClearBackground(bg_col);
         }
         else {
@@ -873,6 +908,7 @@ int main(void) {
             EndShaderMode();
         }
         EndTextureMode();
+        /* ------------------------------------------------- */
 
         BeginDrawing();
         ClearBackground(BLACK);
@@ -905,5 +941,5 @@ int main(void) {
     UnloadRenderTexture(bg_layer);
     UnloadRenderTexture(target);
     CloseWindow();
-    return 0;
+	return 0;
 }
