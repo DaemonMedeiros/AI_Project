@@ -2,9 +2,9 @@
 *.o
 
 # compiled graphics
-*.1bpp
-*.2bpp
-*.pic
+#*.1bpp
+#*.2bpp
+#*.pic
 
 # compiled roms
 *.gbc
