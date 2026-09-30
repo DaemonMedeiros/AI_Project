@@ -151,7 +151,27 @@
     </Manifest>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClCompile Include="data_tables.c" />
+    <ClCompile Include="fade.c" />
     <ClCompile Include="main.c" />
+    <ClCompile Include="map.c" />
+    <ClCompile Include="npc.c" />
+    <ClCompile Include="palettes.c" />
+    <ClCompile Include="parsers.c" />
+    <ClCompile Include="player.c" />
+    <ClCompile Include="render.c" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="data_tables.h" />
+    <ClInclude Include="fade.h" />
+    <ClInclude Include="gb.h" />
+    <ClInclude Include="map.h" />
+    <ClInclude Include="npc.h" />
+    <ClInclude Include="palettes.h" />
+    <ClInclude Include="parsers.h" />
+    <ClInclude Include="player.h" />
+    <ClInclude Include="render.h" />
+    <ClInclude Include="types.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">
