@@ -23,7 +23,8 @@ extern const uint8_t carpet_down[];
 extern const uint8_t carpet_up[];
 extern const uint8_t carpet_left[];
 extern const uint8_t carpet_right[];
-extern const LedgeEntry ledge_tiles[];
+#define NUM_LEDGE_TILES 8
+extern const LedgeEntry ledge_tiles[NUM_LEDGE_TILES];
 extern const char* npc_sprite_files[];
 extern const uint8_t sprite_frames[6][4];
 extern const int anim_table[4][4];

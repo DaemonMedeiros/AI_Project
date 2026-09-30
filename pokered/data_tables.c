@@ -69,7 +69,7 @@ const uint8_t carpet_up[] = { 0x01, 0x5C, 0xFF };
 const uint8_t carpet_left[] = { 0x1A, 0x4B, 0xFF };
 const uint8_t carpet_right[] = { 0x0F, 0x4E, 0xFF };
 
-const LedgeEntry ledge_tiles[] = {
+const LedgeEntry ledge_tiles[NUM_LEDGE_TILES] = {
     {DIR_DOWN,  0x2C, 0x37},
     {DIR_DOWN,  0x39, 0x36},
     {DIR_DOWN,  0x39, 0x37},

@@ -19,7 +19,7 @@
 #define WALK_STEP_FRAMES    8
 #define NPC_STEP_FRAMES     16
 #define HOP_STEP_FRAMES     16
-#define HOP_PEAK_PIXELS     8
+#define HOP_PEAK_PIXELS     12
 
 #define FADE_STEP_TICKS     4
 
