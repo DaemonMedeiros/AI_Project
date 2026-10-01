@@ -210,7 +210,7 @@ int parse_warps(const char* objects_path, WarpEvent* out, int max) {
     return count;
 }
 
-int parse_objects(const char* objects_path, NPC* out, int max) {
+int parse_objects(const char* objects_path, const char* map_name, NPC* out, int max) {
     FILE* f = fopen(objects_path, "r");
     if (!f) return 0;
     int count = 0;
@@ -242,15 +242,15 @@ int parse_objects(const char* objects_path, NPC* out, int max) {
         NPC* n = &out[count];
         memset(n, 0, sizeof(*n));
         n->sprite_id = sprite_id_from_name(sprite_name);
-        n->movement_byte1 = parse_movement_byte1(mv1);
-        n->movement_byte2 = parse_movement_byte2(mv2);
+        n->move_type = parse_move_type(mv1);
+        n->move_param = parse_move_param(mv2);
         n->active = (n->sprite_id != 0);
         n->tile_x = x;
         n->tile_y = y;
         n->target_x = n->tile_x;
         n->target_y = n->tile_y;
         n->movement_status = MSTAT_READY;
-        switch (n->movement_byte2) {
+        switch (n->move_param) {
         case MOVE_DIR_DOWN:  n->facing = DIR_DOWN;  break;
         case MOVE_DIR_UP:    n->facing = DIR_UP;    break;
         case MOVE_DIR_LEFT:  n->facing = DIR_LEFT;  break;
@@ -279,12 +279,12 @@ int parse_objects(const char* objects_path, NPC* out, int max) {
     return count;
 }
 
-uint8_t parse_movement_byte1(const char* s) {
+uint8_t parse_move_type(const char* s) {
     if (strncmp(s, "WALK", 4) == 0) return MOVE_WALK;
     return MOVE_STAY;
 }
 
-uint8_t parse_movement_byte2(const char* s) {
+uint8_t parse_move_param(const char* s) {
     if (strncmp(s, "ANY_DIR", 7) == 0)     return MOVE_ANY_DIR;
     if (strncmp(s, "UP_DOWN", 7) == 0)     return MOVE_UP_DOWN;
     if (strncmp(s, "LEFT_RIGHT", 10) == 0) return MOVE_LEFT_RIGHT;
@@ -589,4 +589,40 @@ const char* lookup_text(const TextTable* table, const char* symbol) {
         if (strcmp(table->entries[i].symbol, symbol) == 0)
             return table->entries[i].text;
     return NULL;
+}
+
+int parse_bg_events(const char* objects_path, BgEvent* out, int max) {
+    FILE* f = fopen(objects_path, "r");
+    if (!f) return 0;
+    int count = 0;
+    int in_section = 0;
+    char line[512];
+    while (fgets(line, sizeof(line), f) && count < max) {
+        if (!in_section) {
+            if (strstr(line, "def_bg_events")) in_section = 1;
+            continue;
+        }
+        if (strstr(line, "def_object_events") ||
+            strstr(line, "def_warps_to")) break;
+
+        char* p = strstr(line, "bg_event");
+        if (!p) continue;
+        p += strlen("bg_event");
+
+        int x = 0, y = 0;
+        char text_id[64] = { 0 };
+        if (sscanf(p, " %d, %d, %63[^,\n]", &x, &y, text_id) != 3) continue;
+
+        for (char* s = text_id; *s; s++)
+            if (*s == ' ' || *s == '\t' || *s == '\r' || *s == '\n') { *s = 0; break; }
+
+        out[count].cell_x = x;
+        out[count].cell_y = y;
+        strncpy(out[count].text_symbol, text_id,
+            sizeof(out[count].text_symbol) - 1);
+        out[count].text_symbol[sizeof(out[count].text_symbol) - 1] = 0;
+        count++;
+    }
+    fclose(f);
+    return count;
 }

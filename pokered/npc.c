@@ -15,9 +15,9 @@ void update_npc(ActiveMap* am, NPC* n, int idx, Player* player) {
         Direction chosen;
         int should_step = 1;
 
-        if (n->movement_byte1 == MOVE_STAY) {
+        if (n->move_type == MOVE_STAY) {
             should_step = 0;
-            switch (n->movement_byte2) {
+            switch (n->move_param) {
             case MOVE_DIR_DOWN:  chosen = DIR_DOWN;  break;
             case MOVE_DIR_UP:    chosen = DIR_UP;    break;
             case MOVE_DIR_LEFT:  chosen = DIR_LEFT;  break;
@@ -26,7 +26,7 @@ void update_npc(ActiveMap* am, NPC* n, int idx, Player* player) {
             }
         }
         else {
-            switch (n->movement_byte2) {
+            switch (n->move_param) {
             case MOVE_UP_DOWN:
                 chosen = (GetRandomValue(0, 1) == 0) ? DIR_UP : DIR_DOWN; break;
             case MOVE_LEFT_RIGHT:
@@ -73,7 +73,7 @@ void update_npc(ActiveMap* am, NPC* n, int idx, Player* player) {
             n->tile_x = n->target_x;
             n->tile_y = n->target_y;
             n->pixel_offset = 0;
-            if (n->movement_byte1 == MOVE_WALK) {
+            if (n->move_type == MOVE_WALK) {
                 n->movement_delay = GetRandomValue(1, 0x40);
                 n->movement_status = MSTAT_DELAYED;
             }

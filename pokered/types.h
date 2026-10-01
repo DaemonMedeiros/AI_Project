@@ -50,8 +50,9 @@ typedef struct {
 
 typedef struct {
     int sprite_id;
-    uint8_t movement_byte1;
-    uint8_t movement_byte2;
+    int global_object_id;  /* index into missable_objects[]; -1 if not missable */
+    uint8_t move_type;
+    uint8_t move_param;
     int text_id;
     char text_symbol[64];
     int active;
@@ -116,6 +117,13 @@ typedef struct {
     int count;
 } TextTable;
 
+#define MAX_BG_EVENTS 8
+
+typedef struct {
+    int cell_x, cell_y;
+    char text_symbol[64];
+} BgEvent;
+
 typedef struct {
     char name[64];
     char prev_map[64];
@@ -141,6 +149,9 @@ typedef struct {
     int sgb_pals[4];
 
     TextTable texts;
+    
+    BgEvent bg_events[MAX_BG_EVENTS];
+    int num_bg_events;
 } ActiveMap;
 
 typedef struct {

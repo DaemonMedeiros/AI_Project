@@ -283,7 +283,7 @@ int load_map(ActiveMap* am, const char* map_name,
         }
     }
 
-    am->num_npcs = parse_objects(obj_path, am->npcs, MAX_OBJECTS);
+    am->num_npcs = parse_objects(obj_path, map_name, am->npcs, MAX_OBJECTS);
     for (int i = 0; i < am->num_npcs; i++) {
         NPC* n = &am->npcs[i];
         if (!n->active) continue;
@@ -292,6 +292,25 @@ int load_map(ActiveMap* am, const char* map_name,
             n->tile_y >= am->map.height * 2)
             n->active = 0;
     }
+
+    for (int i = 0; i < am->num_npcs; i++) {
+        am->npcs[i].global_object_id = -1;
+    }
+
+    for (int i = 0; i < toggle_entries_count; i++) {
+        if (strcmp(toggle_entries[i].map_name, am->name) != 0) continue;
+
+        int idx = toggle_entries[i].object_index;
+        if (idx < 0 || idx >= am->num_npcs) continue;
+
+        am->npcs[idx].global_object_id = i;
+
+        if (!toggle_entries[i].initially_on) {
+            hide_object(i);
+        }
+    }
+
+    am->num_bg_events = parse_bg_events(obj_path, am->bg_events, MAX_BG_EVENTS);
     
     char map_pascal[64];
     build_map_pascal(map_name, map_pascal, sizeof(map_pascal));
@@ -330,6 +349,11 @@ uint8_t tile_in_front_of_cell(ActiveMap* am, int cx, int cy) {
 }
 
 int can_walk_tile(ActiveMap* am, int nx, int ny) {
+    if (IsKeyDown(KEY_C)) {
+        if (nx < 0 || ny < 0) return 0;
+        if (nx >= am->map.width * 2 || ny >= am->map.height * 2) return 0;
+        return 1;
+    }
     if (nx < 0 || ny < 0) return 0;
     if (nx >= am->map.width * 2 || ny >= am->map.height * 2) return 0;
     uint8_t tile_id = tile_in_front_of_cell(am, nx, ny);
@@ -342,6 +366,8 @@ int npc_occupies(ActiveMap* am, int skip, int nx, int ny) {
         if (i == skip) continue;
         NPC* n = &am->npcs[i];
         if (!n->active) continue;
+        if (n->global_object_id >= 0 && is_object_hidden(n->global_object_id))
+            continue;
         if (n->tile_x == nx && n->tile_y == ny) return 1;
         if (n->movement_status == MSTAT_WALKING &&
             n->target_x == nx && n->target_y == ny) return 1;
@@ -427,6 +453,8 @@ NPC* npc_at(ActiveMap* am, int nx, int ny) {
     for (int i = 0; i < am->num_npcs; i++) {
         NPC* n = &am->npcs[i];
         if (!n->active) continue;
+        if (n->global_object_id >= 0 && is_object_hidden(n->global_object_id))
+            continue;
         if (n->tile_x == nx && n->tile_y == ny) return n;
     }
     return NULL;

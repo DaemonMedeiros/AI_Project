@@ -30,6 +30,20 @@ extern const uint8_t sprite_frames[6][4];
 extern const int anim_table[4][4];
 extern const int anim_flip[4][4];
 
+typedef struct {
+    const char* map_name;
+    int object_index;
+    int initially_on;
+} ToggleEntry;
+
+#define MAX_MISSABLE_OBJECTS 256
+
+extern const ToggleEntry toggle_entries[];
+extern const int toggle_entries_count;
+
+int is_object_hidden(int global_id);
+void hide_object(int global_id);
+
 #define NUM_NPC_SPRITES 73
 
 const char* lookup_collision_label(const char* stem);
@@ -39,6 +53,7 @@ int list_has_term(const uint8_t* ids, uint8_t tid);
 int is_warp_tile(const char* stem, uint8_t tid);
 int is_door_tile(const char* stem, uint8_t tid);
 int sprite_id_from_name(const char* name);
+int sprite_is_static(int sprite_id);
 int dir_dx(Direction d);
 int dir_dy(Direction d);
 

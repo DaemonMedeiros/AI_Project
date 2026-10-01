@@ -163,7 +163,7 @@ int main(void) {
     int loc_pw_isprio = GetShaderLocation(prio_write_shader, "isPrio");
 
     ActiveMap current = { 0 };
-    if (!load_map(&current, "PALLET_TOWN", paths.map_const_path,
+    if (!load_map(&current, "VIRIDIAN_CITY", paths.map_const_path,
         paths.headers_dir, paths.objects_dir, paths.maps_dir,
         paths.tilesets_dir, paths.blocksets_dir, paths.collision_path)) {
         UnloadShader(priority_shader);
@@ -305,8 +305,12 @@ int main(void) {
             }
 
             if (!active_text_active) {
-                for (int i = 0; i < current.num_npcs; i++)
-                    update_npc(&current, &current.npcs[i], i, &player);
+                for (int i = 0; i < current.num_npcs; i++) {
+                    NPC* n = &current.npcs[i];
+                    if (n->global_object_id >= 0 && is_object_hidden(n->global_object_id))
+                        continue;   /* <-- hidden objects don't tick */
+                    update_npc(&current, n, i, &player);
+                }
             }
 
             if (player.forced_move_ticks > 0) {
@@ -333,9 +337,11 @@ int main(void) {
             int z_released_since_open = 1;
 
             if (!active_text_active && interact_pressed) {
+
                 int fx = player.tile_x + dir_dx(player.facing);
                 int fy = player.tile_y + dir_dy(player.facing);
                 NPC* target = npc_at(&current, fx, fy);
+
                 if (target && target->movement_status != MSTAT_WALKING) {
                     const char* str = lookup_text(&current.texts, target->text_symbol);
                     if (str) {
@@ -347,13 +353,43 @@ int main(void) {
                         z_released_since_open = 0;
                         active_text_npc = target;
 
-                        switch (player.facing) {
-                        case DIR_DOWN:  target->facing = DIR_UP;    break;
-                        case DIR_UP:    target->facing = DIR_DOWN;  break;
-                        case DIR_LEFT:  target->facing = DIR_RIGHT; break;
-                        case DIR_RIGHT: target->facing = DIR_LEFT;  break;
+                        if (!sprite_is_static(target->sprite_id)) {
+                            switch (player.facing) {
+                            case DIR_DOWN:  target->facing = DIR_UP;    break;
+                            case DIR_UP:    target->facing = DIR_DOWN;  break;
+                            case DIR_LEFT:  target->facing = DIR_RIGHT; break;
+                            case DIR_RIGHT: target->facing = DIR_LEFT;  break;
+                            }
                         }
                         target->frozen = 1;
+                    }
+
+                    if (target->global_object_id >= 0 &&
+                        sprite_is_collectable(target->sprite_id)) {
+                        hide_object(target->global_object_id);
+                    }
+                }
+                else {
+                    /* Check for a sign at the facing tile. */
+                    const char* sign_sym = NULL;
+                    for (int i = 0; i < current.num_bg_events; i++) {
+                        if (current.bg_events[i].cell_x == fx &&
+                            current.bg_events[i].cell_y == fy) {
+                            sign_sym = current.bg_events[i].text_symbol;
+                            break;
+                        }
+                    }
+                    if (sign_sym) {
+                        const char* str = lookup_text(&current.texts, sign_sym);
+                        if (str) {
+                            strncpy(active_text, str, sizeof(active_text) - 1);
+                            active_text[sizeof(active_text) - 1] = 0;
+                            active_text_page = 0;
+                            active_text_last_page = count_text_pages(active_text) - 1;
+                            active_text_active = 1;
+                            active_text_npc = NULL;   /* no NPC to freeze or unfreeze */
+                            z_released_since_open = 0;
+                        }
                     }
                 }
             }
@@ -569,6 +605,11 @@ int main(void) {
         for (int i = 0; i < current.num_npcs; i++) {
             NPC* n = &current.npcs[i];
             if (!n->active) { n->grass_priority = 0; continue; }
+            if (is_object_hidden(n->global_object_id))
+            {
+                n->grass_priority = 0;
+                continue;
+            }
             uint8_t st = tile_in_front_of_cell(&current, n->tile_x, n->tile_y);
             n->grass_priority = (grass_id != 0xFF && st == grass_id) ? 1 : 0;
         }
@@ -794,6 +835,7 @@ int main(void) {
         for (int i = 0; i < current.num_npcs; i++) {
             NPC* n = &current.npcs[i];
             if (!n->active) continue;
+            if (is_object_hidden(n->global_object_id)) continue;
             if (n->sprite_id <= 0 || n->sprite_id >= NUM_NPC_SPRITES) continue;
             Tileset* nts = &npc_ts[n->sprite_id];
             if (!nts->texture.id) continue;
