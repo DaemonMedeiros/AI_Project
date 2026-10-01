@@ -10,4 +10,7 @@ void begin_step(Player* p, Direction d, int nx, int ny, int frames);
 void do_map_transition(ActiveMap* am, Player* p, const MapPaths* paths);
 void do_warp(ActiveMap* am, Player* p, WarpEvent* warp, const MapPaths* paths);
 
+void start_interaction(Player* p, int text_id);
+int  is_interacting(const Player* p);
+
 #endif

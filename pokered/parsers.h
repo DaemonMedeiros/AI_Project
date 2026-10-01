@@ -12,10 +12,19 @@ int  parse_map_tileset(const char* header_path, char* out_stem, size_t stem_size
 int  parse_border_block(const char* objects_path, uint8_t* out_border);
 int  parse_connections(const char* header_path, MapConnection* out, int max);
 int  parse_warps(const char* objects_path, WarpEvent* out, int max);
-int  parse_objects(const char* objects_path, NPC* out, int max);
+int  parse_objects(const char* objects_path, const char* map_name, NPC* out, int max);
 
-uint8_t parse_movement_byte1(const char* s);
-uint8_t parse_movement_byte2(const char* s);
+uint8_t parse_move_type(const char* s);
+uint8_t parse_move_param(const char* s);
+
+void parse_fly_warps(const char* path, FlyWarpTable* out);
+int  lookup_fly_warp(const FlyWarpTable* table, const char* map_name, int* out_x, int* out_y);
+
+void build_map_pascal(const char* map_const, char* out, size_t out_size);
+void parse_scripts(const char* scripts_path, const char* text_path, TextTable* out);
+const char* lookup_text(const struct TextTable* table, const char* symbol);
+int count_text_pages(const char* text);
+int parse_bg_events(const char* objects_path, BgEvent* out, int max);
 
 #define MOVE_WALK        0xFE
 #define MOVE_STAY        0xFF

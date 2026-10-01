@@ -120,6 +120,44 @@ Texture2D decode_1bpp(const char* path) {
     return tex;
 }
 
+/* Loads a full 1bpp font sheet: num_tiles tiles laid out 16 wide. */
+Texture2D decode_1bpp_sheet(const char* path, int num_tiles) {
+    Texture2D tex = { 0 };
+    FILE* f = fopen(path, "rb");
+    if (!f) { TraceLog(LOG_ERROR, "Failed to open %s", path); return tex; }
+
+    int tiles_wide = 16;
+    int tiles_high = (num_tiles + tiles_wide - 1) / tiles_wide;
+    int tex_w = tiles_wide * TILE_SIZE;
+    int tex_h = tiles_high * TILE_SIZE;
+    Color* pixels = (Color*)calloc((size_t)tex_w * tex_h, sizeof(Color));
+
+    uint8_t tile_data[8];
+    for (int t = 0; t < num_tiles; t++) {
+        if (fread(tile_data, 1, 8, f) != 8) break;
+        int col = t % tiles_wide;
+        int row = t / tiles_wide;
+        for (int y = 0; y < 8; y++) {
+            for (int x = 0; x < 8; x++) {
+                int bit = (tile_data[y] >> (7 - x)) & 1;
+                Color c = { 0, 0, 0, bit ? 255 : 0 };
+                if (bit) c.b = (uint8_t)((c.b & 0xFC) | 3);
+                pixels[(row * 8 + y) * tex_w + (col * 8 + x)] = c;
+            }
+        }
+    }
+    fclose(f);
+
+    Image img = {
+        .data = pixels, .width = tex_w, .height = tex_h,
+        .mipmaps = 1, .format = PIXELFORMAT_UNCOMPRESSED_R8G8B8A8
+    };
+    tex = LoadTextureFromImage(img);
+    if (tex.id) SetTextureFilter(tex, TEXTURE_FILTER_POINT);
+    free(pixels);
+    return tex;
+}
+
 Rectangle sprite_quadrant_src(const Tileset* ts, uint8_t tid, int flip) {
     int physical = (tid >= 0x80) ? (tid - 0x80 + 12) : tid;
     int bank_col = physical % TILESET_TILES_WIDE;

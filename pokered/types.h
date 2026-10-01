@@ -50,9 +50,13 @@ typedef struct {
 
 typedef struct {
     int sprite_id;
-    uint8_t movement_byte1;
-    uint8_t movement_byte2;
+    int global_object_id;  /* index into missable_objects[]; -1 if not missable */
+    uint8_t move_type;
+    uint8_t move_param;
+    int text_id;
+    char text_symbol[64];
     int active;
+    int frozen;
 
     int tile_x, tile_y;
     int target_x, target_y;
@@ -101,6 +105,26 @@ typedef struct {
 #define MAX_OBJECTS     16
 
 typedef struct {
+    char symbol[64];
+    char label[64];
+    char text[512];
+} TextEntry;
+
+#define MAX_TEXT_ENTRIES 64
+
+typedef struct {
+    TextEntry entries[MAX_TEXT_ENTRIES];
+    int count;
+} TextTable;
+
+#define MAX_BG_EVENTS 8
+
+typedef struct {
+    int cell_x, cell_y;
+    char text_symbol[64];
+} BgEvent;
+
+typedef struct {
     char name[64];
     char prev_map[64];
     char tileset_stem[64];
@@ -123,6 +147,11 @@ typedef struct {
     int num_npcs;
 
     int sgb_pals[4];
+
+    TextTable texts;
+    
+    BgEvent bg_events[MAX_BG_EVENTS];
+    int num_bg_events;
 } ActiveMap;
 
 typedef struct {
@@ -134,5 +163,17 @@ typedef struct {
     const char* blocksets_dir;
     const char* collision_path;
 } MapPaths;
+
+#define MAX_FLY_WARPS 32
+
+typedef struct {
+    char map_name[64];
+    int x, y;
+} FlyWarp;
+
+typedef struct {
+    FlyWarp entries[MAX_FLY_WARPS];
+    int count;
+} FlyWarpTable;
 
 #endif

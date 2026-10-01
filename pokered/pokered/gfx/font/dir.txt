@@ -1,0 +1,6 @@
+-rw-r--r-- 1 gameuser 197121    8 Sep 23 12:06 ED.1bpp
+-rw-r--r-- 1 gameuser 197121    8 Sep 23 12:06 P.1bpp
+-rw-r--r-- 1 gameuser 197121 1024 Sep 23 12:06 font.1bpp
+-rw-r--r-- 1 gameuser 197121  32 Sep 23 12:06 AB.2bpp
+-rw-r--r-- 1 gameuser 197121 480 Sep 23 12:06 font_battle_extra.2bpp
+-rw-r--r-- 1 gameuser 197121 512 Sep 23 12:06 font_extra.2bpp

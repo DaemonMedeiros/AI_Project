@@ -12,6 +12,7 @@
 #include "player.h"
 #include "npc.h"
 #include "fade.h"
+#include "parsers.h"
 #include "wild_encounter.h"   /* ADDED */
 #include "battle.h"           /* ADDED */
 
@@ -68,6 +69,59 @@ static uint8_t* load_file(const char* path, int* out_size) {
     return data;
 }
 
+/* Returns tile index into font.1bpp (0-based), or 0xFF to skip drawing. */
+/* Returns tile index into font.1bpp (0-based, i.e. charmap value - 0x80),
+   or 0xFF to skip drawing (cursor still advances). */
+static uint8_t ascii_to_font(unsigned char c) {
+    /* Letters: $80-$99 / $A0-$B9 */
+    if (c >= 'A' && c <= 'Z') return (uint8_t)(c - 'A');          /* 0x00-0x19 */
+    if (c >= 'a' && c <= 'z') return (uint8_t)(0x20 + (c - 'a')); /* 0x20-0x39 */
+
+    /* Digits: $F6-$FF */
+    if (c >= '0' && c <= '9') return (uint8_t)(0x76 + (c - '0')); /* 0x76-0x7F */
+
+    switch (c) {
+    case ' ':  return 0xFF;
+
+        /* Punctuation $80-$FF */
+    case '(':  return 0x1A;  /* $9A */
+    case ')':  return 0x1B;  /* $9B */
+    case ':':  return 0x1C;  /* $9C */
+    case ';':  return 0x1D;  /* $9D */
+    case '[':  return 0x1E;  /* $9E */
+    case ']':  return 0x1F;  /* $9F */
+
+    case '\'': return 0x60;  /* $E0 */
+    case '-':  return 0x63;  /* $E3 */
+    case '?':  return 0x66;  /* $E6 */
+    case '!':  return 0x67;  /* $E7 */
+    case '.':  return 0x68;  /* $E8 */
+
+    case '/':  return 0x73;  /* $F3 */
+    case ',':  return 0x74;  /* $F4 */
+
+        /* Symbols $EC-$F5 */
+    case 0xEC: return 0x6C;  /* ▷ */
+    case 0xED: return 0x6D;  /* ▶ */
+    case 0xEE: return 0x6E;  /* ▼ */
+    case 0xEF: return 0x6F;  /* ♂ */
+    case 0xF0: return 0x70;  /* ¥ */
+    case 0xF1: return 0x71;  /* × */
+    case 0xF5: return 0x75;  /* ♀ */
+
+        /* é ($BA) - Latin-1 byte 0xE9 */
+    case 0xE9: return 0x3A;
+
+        /* <PK> ($E1) and <MN> ($E2) - handled by multi-char parser, but
+           if you emit them as single bytes: */
+    case 0x01: return 0x61;  /* <PK> if you encode as 0x01 */
+    case 0x02: return 0x62;  /* <MN> if you encode as 0x02 */
+
+    default: break;
+    }
+    return 0xFF;
+}
+
 int main(void) {
     const MapPaths paths = {
         .map_const_path = REPO_ROOT "/constants/map_constants.asm",
@@ -109,7 +163,7 @@ int main(void) {
     int loc_pw_isprio = GetShaderLocation(prio_write_shader, "isPrio");
 
     ActiveMap current = { 0 };
-    if (!load_map(&current, "PALLET_TOWN", paths.map_const_path,
+    if (!load_map(&current, "VIRIDIAN_CITY", paths.map_const_path,
         paths.headers_dir, paths.objects_dir, paths.maps_dir,
         paths.tilesets_dir, paths.blocksets_dir, paths.collision_path)) {
         UnloadShader(priority_shader);
@@ -122,6 +176,15 @@ int main(void) {
         CloseWindow();
         return 1;
     }
+
+    Tileset font_ts = { 0 };
+    Texture2D font_tex = decode_1bpp_sheet(REPO_ROOT "/gfx/font/font.1bpp", 128);
+    font_ts.texture.id = font_tex.id;
+    font_ts.tiles_wide = 16;
+
+    Tileset font_extra_ts = { 0 };
+    decode_tileset(REPO_ROOT "/gfx/font/font_extra.2bpp", &font_extra_ts,
+        REG_BGP, 0, current.sgb_pals[0]);
 
     Tileset player_ts = { 0 };
     decode_tileset(player_sprite_path, &player_ts, REG_OBP0, 1, current.sgb_pals[0]);
@@ -169,17 +232,35 @@ int main(void) {
         }
     }
 
+    const char* fly_warps_path = REPO_ROOT "/data/maps/special_warps.asm";
+    FlyWarpTable fly_warps = { 0 };
+    parse_fly_warps(fly_warps_path, &fly_warps);
+
     Player player = { 0 };
-    player.tile_x = current.map.width;
-    player.tile_y = current.map.height;
-    player.target_x = player.tile_x;
-    player.target_y = player.tile_y;
+
+    int spawn_x = current.map.width;
+    int spawn_y = current.map.height;
+    if (!lookup_fly_warp(&fly_warps, current.name, &spawn_x, &spawn_y)) {
+        TraceLog(LOG_WARNING, "No fly warp for %s, using map center", current.name);
+    }
+
+    player.tile_x = spawn_x;
+    player.tile_y = spawn_y;
+    player.target_x = spawn_x;
+    player.target_y = spawn_y;
     player.state = PSTATE_NOT_MOVING;
     player.facing = DIR_DOWN;
 
     PaletteFade fade = { 0 };
     fade.current_bgp = REG_BGP;
 
+    int active_text_id = -1;
+    char active_text[512] = { 0 };
+    int active_text_active = 0;
+    NPC* active_text_npc = NULL;
+    int interact_key_was_down = 0;
+    int active_text_page = 0;      /* current page index, 0-based */
+    int active_text_last_page = 0; /* highest page the current text has */
     /* -------- ADDED: battle + wild encounter state -------- */
     BattleState battle;
     battle_init(&battle);
@@ -223,8 +304,14 @@ int main(void) {
                 continue;
             }
 
-            for (int i = 0; i < current.num_npcs; i++)
-                update_npc(&current, &current.npcs[i], i, &player);
+            if (!active_text_active) {
+                for (int i = 0; i < current.num_npcs; i++) {
+                    NPC* n = &current.npcs[i];
+                    if (n->global_object_id >= 0 && is_object_hidden(n->global_object_id))
+                        continue;   /* <-- hidden objects don't tick */
+                    update_npc(&current, n, i, &player);
+                }
+            }
 
             if (player.forced_move_ticks > 0) {
                 advance_walk_anim(&player.intra_frame, &player.anim_frame);
@@ -237,6 +324,92 @@ int main(void) {
                     player.pixel_offset = 0;
                     player.forced_move_ticks = 0;
                     player.state = PSTATE_NOT_MOVING;
+                }
+                logic_accumulator -= LOGIC_DT;
+                continue;
+            }
+
+            int interact_down = IsKeyDown(KEY_Z);
+
+            /* Detect the rising edge of Z once per tick. */
+            int interact_pressed = interact_down && !interact_key_was_down;
+            interact_key_was_down = interact_down;
+            int z_released_since_open = 1;
+
+            if (!active_text_active && interact_pressed) {
+
+                int fx = player.tile_x + dir_dx(player.facing);
+                int fy = player.tile_y + dir_dy(player.facing);
+                NPC* target = npc_at(&current, fx, fy);
+
+                if (target && target->movement_status != MSTAT_WALKING) {
+                    const char* str = lookup_text(&current.texts, target->text_symbol);
+                    if (str) {
+                        strncpy(active_text, str, sizeof(active_text) - 1);
+                        active_text[sizeof(active_text) - 1] = 0;
+                        active_text_active = 1;
+                        active_text_page = 0;
+                        active_text_last_page = count_text_pages(active_text) - 1;
+                        z_released_since_open = 0;
+                        active_text_npc = target;
+
+                        if (!sprite_is_static(target->sprite_id)) {
+                            switch (player.facing) {
+                            case DIR_DOWN:  target->facing = DIR_UP;    break;
+                            case DIR_UP:    target->facing = DIR_DOWN;  break;
+                            case DIR_LEFT:  target->facing = DIR_RIGHT; break;
+                            case DIR_RIGHT: target->facing = DIR_LEFT;  break;
+                            }
+                        }
+                        target->frozen = 1;
+                    }
+
+                    if (target->global_object_id >= 0 &&
+                        sprite_is_collectable(target->sprite_id)) {
+                        hide_object(target->global_object_id);
+                    }
+                }
+                else {
+                    /* Check for a sign at the facing tile. */
+                    const char* sign_sym = NULL;
+                    for (int i = 0; i < current.num_bg_events; i++) {
+                        if (current.bg_events[i].cell_x == fx &&
+                            current.bg_events[i].cell_y == fy) {
+                            sign_sym = current.bg_events[i].text_symbol;
+                            break;
+                        }
+                    }
+                    if (sign_sym) {
+                        const char* str = lookup_text(&current.texts, sign_sym);
+                        if (str) {
+                            strncpy(active_text, str, sizeof(active_text) - 1);
+                            active_text[sizeof(active_text) - 1] = 0;
+                            active_text_page = 0;
+                            active_text_last_page = count_text_pages(active_text) - 1;
+                            active_text_active = 1;
+                            active_text_npc = NULL;   /* no NPC to freeze or unfreeze */
+                            z_released_since_open = 0;
+                        }
+                    }
+                }
+            }
+
+            if (active_text_active) {
+                if (!interact_down) z_released_since_open = 1;
+
+                if ((z_released_since_open && interact_pressed) || IsKeyDown(KEY_X)) {
+                    if (active_text_page < active_text_last_page && !IsKeyDown(KEY_X)) {
+                        /* Advance to next page. */
+                        active_text_page++;
+                    }
+                    else {
+                        /* Close the box. */
+                        active_text_active = 0;
+                        active_text_page = 0;
+                        active_text_last_page = 0;
+                        if (active_text_npc) active_text_npc->frozen = 0;
+                        active_text_npc = NULL;
+                    }
                 }
                 logic_accumulator -= LOGIC_DT;
                 continue;
@@ -299,25 +472,27 @@ int main(void) {
                 }
                 else {
                     Direction d = (Direction)input;
-                    int standing_idx = find_warp_index(&current,
-                        player.tile_x,
-                        player.tile_y);
-
-                    if (standing_idx >= 0 &&
-                        current.warps[standing_idx].warp_type == WARP_TYPE_CARPET &&
-                        player.warp_cooldown == 0 &&
-                        (current.warps[standing_idx].warp_dir == -1 ||
-                            current.warps[standing_idx].warp_dir == (int)d)) {
-                        begin_fade_out(&fade, 1, standing_idx);
-                        logic_accumulator -= LOGIC_DT;
-                        continue;
-                    }
 
                     if (d != player.facing) {
                         player.facing = d;
                         player.state = PSTATE_NOT_MOVING;
+                        advance_walk_anim(&player.intra_frame, &player.anim_frame);
                     }
                     else {
+                        int standing_idx = find_warp_index(&current,
+                            player.tile_x,
+                            player.tile_y);
+
+                        if (standing_idx >= 0 &&
+                            current.warps[standing_idx].warp_type == WARP_TYPE_CARPET &&
+                            player.warp_cooldown == 0 &&
+                            (current.warps[standing_idx].warp_dir == -1 ||
+                                current.warps[standing_idx].warp_dir == (int)d)) {
+                            begin_fade_out(&fade, 1, standing_idx);
+                            logic_accumulator -= LOGIC_DT;
+                            continue;
+                        }
+
                         int nx = player.tile_x + dir_dx(d);
                         int ny = player.tile_y + dir_dy(d);
                         WarpEvent* warp = find_warp(&current, nx, ny);
@@ -339,6 +514,9 @@ int main(void) {
                                 !npc_occupies(&current, -1, nx, ny))) {
                             player.stepped_from_warp = (standing_idx >= 0);
                             begin_step(&player, d, nx, ny, WALK_STEP_FRAMES);
+                        }
+                        else {
+                            advance_walk_anim(&player.intra_frame, &player.anim_frame);
                         }
                     }
                 }
@@ -427,6 +605,11 @@ int main(void) {
         for (int i = 0; i < current.num_npcs; i++) {
             NPC* n = &current.npcs[i];
             if (!n->active) { n->grass_priority = 0; continue; }
+            if (is_object_hidden(n->global_object_id))
+            {
+                n->grass_priority = 0;
+                continue;
+            }
             uint8_t st = tile_in_front_of_cell(&current, n->tile_x, n->tile_y);
             n->grass_priority = (grass_id != 0xFF && st == grass_id) ? 1 : 0;
         }
@@ -500,6 +683,147 @@ int main(void) {
                 }
             }
         }
+
+        if (active_text_active) {
+            const int box_y = GB_HEIGHT - 48;
+
+            int shade0 = reg_shade(REG_BGP, 0);
+            Color interior = sgb_color_to_rgba(sgb->colors[shade0]);
+            DrawRectangle(0, box_y, GB_WIDTH, 48, interior);
+
+            if (font_extra_ts.texture.id) {
+                const uint8_t T_UL = 0x19, T_H = 0x1A, T_UR = 0x1B;
+                const uint8_t T_V = 0x1C, T_LL = 0x1D, T_LR = 0x1E;
+                Rectangle src_ul = { (T_UL % 16) * 8, (T_UL / 16) * 8, 8, 8 };
+                Rectangle src_h = { (T_H % 16) * 8, (T_H / 16) * 8, 8, 8 };
+                Rectangle src_ur = { (T_UR % 16) * 8, (T_UR / 16) * 8, 8, 8 };
+                Rectangle src_v = { (T_V % 16) * 8, (T_V / 16) * 8, 8, 8 };
+                Rectangle src_ll = { (T_LL % 16) * 8, (T_LL / 16) * 8, 8, 8 };
+                Rectangle src_lr = { (T_LR % 16) * 8, (T_LR / 16) * 8, 8, 8 };
+
+                for (int c = 0; c < 20; c++) {
+                    Rectangle top = (c == 0) ? src_ul : (c == 19) ? src_ur : src_h;
+                    Rectangle bot = (c == 0) ? src_ll : (c == 19) ? src_lr : src_h;
+                    DrawTextureRec(font_extra_ts.texture, top,
+                        (Vector2) {
+                        (float)(c * 8), (float)(box_y + 0)
+                    }, WHITE);
+                    DrawTextureRec(font_extra_ts.texture, bot,
+                        (Vector2) {
+                        (float)(c * 8), (float)(box_y + 40)
+                    }, WHITE);
+                }
+                for (int r = 1; r <= 4; r++) {
+                    float y = (float)(box_y + r * 8);
+                    DrawTextureRec(font_extra_ts.texture, src_v, (Vector2) { 0.0f, y }, WHITE);
+                    DrawTextureRec(font_extra_ts.texture, src_v, (Vector2) { 152.0f, y }, WHITE);
+                }
+            }
+
+            if (font_ts.texture.id) {
+                static const char* player_name = "NINTEN";
+                static const char* rival_name = "SONY";
+
+                /* Walk the string, skipping pages before active_text_page
+                   and stopping once we enter a page after active_text_page. */
+                int cur_page = 0;
+                int lines_on_page = 0;
+                int any_content_this_page = 0;
+                int x = 8;
+                int col = 0;
+
+                for (const char* s = active_text; *s; s++) {
+                    unsigned char ch = (unsigned char)*s;
+
+                    /* Page boundaries. */
+                    if (ch == 0x05 || ch == 0x06 || ch == 0x08) {
+                        if (any_content_this_page) { cur_page++; any_content_this_page = 0; }
+                        lines_on_page = 0;
+                        col = 0; x = 8;
+                        continue;
+                    }
+                    if (ch == '\n') {
+                        lines_on_page++;
+                        col = 0; x = 8;
+                        if (lines_on_page >= 2) {
+                            cur_page++;
+                            lines_on_page = 0;
+                            any_content_this_page = 0;
+                            continue;
+                        }
+                        /* Even on line 1 of the page, if we're on a later page
+                           than we want, break. */
+                        if (cur_page > active_text_page) break;
+                        continue;
+                    }
+
+                    if (cur_page > active_text_page) break;
+                    if (cur_page < active_text_page) { any_content_this_page = 1; continue; }
+
+                    int y_top = box_y + 16 + lines_on_page * 16;
+
+                    uint8_t tile = 0xFF;
+
+                    if (ch == 0x07) {
+                        static const uint8_t poke_prefix[4] = { 0x0F, 0x0E, 0x0A, 0x3A };
+                        for (int i = 0; i < 4; i++) {
+                            Rectangle src = {
+                                (float)((poke_prefix[i] % 16) * 8),
+                                (float)((poke_prefix[i] / 16) * 8),
+                                8.0f, 8.0f
+                            };
+                            DrawTextureRec(font_tex, src,
+                                (Vector2) {
+                                (float)x, (float)y_top
+                            }, WHITE);
+                            col++; x += 8;
+                        }
+                        any_content_this_page = 1;
+                        continue;
+                    }
+                    else if (ch == 0x01) tile = 0x61;
+                    else if (ch == 0x02) tile = 0x62;
+                    else if (ch == 0x03 || ch == 0x04) {
+                        const char* name = (ch == 0x03) ? player_name : rival_name;
+                        for (const char* n = name; *n; n++) {
+                            uint8_t nt = ascii_to_font((unsigned char)*n);
+                            if (nt != 0xFF && nt < 128) {
+                                Rectangle nsrc = {
+                                    (float)((nt % 16) * 8),
+                                    (float)((nt / 16) * 8),
+                                    8.0f, 8.0f
+                                };
+                                DrawTextureRec(font_tex, nsrc,
+                                    (Vector2) {
+                                    (float)x, (float)y_top
+                                }, WHITE);
+                            }
+                            col++; x += 8;
+                        }
+                        any_content_this_page = 1;
+                        continue;
+                    }
+                    else {
+                        tile = ascii_to_font(ch);
+                    }
+
+                    if (tile != 0xFF && tile < 128) {
+                        Rectangle src = {
+                            (float)((tile % 16) * 8),
+                            (float)((tile / 16) * 8),
+                            8.0f, 8.0f
+                        };
+                        DrawTextureRec(font_tex, src,
+                            (Vector2) {
+                            (float)x, (float)y_top
+                        }, WHITE);
+                    }
+                    col++; x += 8;
+                    any_content_this_page = 1;
+                }
+            }
+        }
+
         EndTextureMode();
 
         BeginTextureMode(sprite_layer);
@@ -511,16 +835,21 @@ int main(void) {
         for (int i = 0; i < current.num_npcs; i++) {
             NPC* n = &current.npcs[i];
             if (!n->active) continue;
+            if (is_object_hidden(n->global_object_id)) continue;
             if (n->sprite_id <= 0 || n->sprite_id >= NUM_NPC_SPRITES) continue;
             Tileset* nts = &npc_ts[n->sprite_id];
             if (!nts->texture.id) continue;
 
+            int nx_px = n->tile_x * TILE_PIXEL_SIZE + dir_dx(n->facing) * n->pixel_offset;
+            int ny_px = n->tile_y * TILE_PIXEL_SIZE + dir_dy(n->facing) * n->pixel_offset;
+            int px = nx_px - cam_x, py = ny_px - cam_y;
+
+            if (active_text_active && py + 16 > GB_HEIGHT - 48) continue;
+
             int anim_idx = anim_table[n->facing][n->anim_frame];
             const uint8_t* tiles = sprite_frames[anim_idx];
             int flip = anim_flip[n->facing][n->anim_frame];
-            int nx_px = n->tile_x * TILE_PIXEL_SIZE + dir_dx(n->facing) * n->pixel_offset;
-            int ny_px = n->tile_y * TILE_PIXEL_SIZE + dir_dy(n->facing) * n->pixel_offset;
-            draw_sprite(nts, tiles, flip, nx_px - cam_x, ny_px - cam_y);
+            draw_sprite(nts, tiles, flip, px, py);
         }
 
         if (player_ts.texture.id) {
@@ -630,6 +959,9 @@ int main(void) {
         EndDrawing();
     }
 
+    if (font_tex.id) UnloadTexture(font_tex);
+    if (font_extra_ts.texture.id) UnloadTexture(font_extra_ts.texture);
+    if (font_extra_ts.pixels) free(font_extra_ts.pixels);
     if (player_ts.texture.id) UnloadTexture(player_ts.texture);
     if (player_ts.pixels) free(player_ts.pixels);
     for (int i = 0; i < NUM_NPC_SPRITES; i++) {
@@ -650,5 +982,5 @@ int main(void) {
     UnloadRenderTexture(bg_layer);
     UnloadRenderTexture(target);
     CloseWindow();
-    return 0;
+	return 0;
 }
