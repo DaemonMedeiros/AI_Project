@@ -1,13 +1,17 @@
 #include "battle.h"
 #include "wild_encounter.h"
 #include "gb.h"
+#include "render.h"      /* for decode_2bpp_sprite_pixel */
+#include "palettes.h"    /* for SGBPalette, sgb_super_palettes,
+                            NUM_SGB_PALS, PAL_REDMON, PAL_BLUEMON */
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
+#include <math.h>
 
-/* ------------------------------------------------------------------ */
-/* Move data                                                           */
-/* ------------------------------------------------------------------ */
+                            /* ------------------------------------------------------------------ */
+                            /* Move data                                                           */
+                            /* ------------------------------------------------------------------ */
 
 typedef struct {
     uint8_t type;
@@ -19,18 +23,18 @@ typedef struct {
 } MoveInfo;
 
 static const MoveInfo move_table[] = {
-    [MOVE_NONE]         = { TYPE_NORMAL,   0,   0,  0, 0, 1 },
-    [MOVE_SCRATCH]      = { TYPE_NORMAL,  40, 100, 35, 0, 0 },
-    [MOVE_GUST]         = { TYPE_NORMAL,  40, 100, 35, 0, 0 },
-    [MOVE_SAND_ATTACK]  = { TYPE_NORMAL,   0, 100, 15, 0, 1 },
-    [MOVE_TACKLE]       = { TYPE_NORMAL,  35,  95, 35, 0, 0 },
-    [MOVE_TAIL_WHIP]    = { TYPE_NORMAL,   0, 100, 30, 0, 1 },
-    [MOVE_GROWL]        = { TYPE_NORMAL,   0, 100, 40, 0, 1 },
+    [MOVE_NONE] = { TYPE_NORMAL,   0,   0,  0, 0, 1 },
+    [MOVE_SCRATCH] = { TYPE_NORMAL,  40, 100, 35, 0, 0 },
+    [MOVE_GUST] = { TYPE_NORMAL,  40, 100, 35, 0, 0 },
+    [MOVE_SAND_ATTACK] = { TYPE_NORMAL,   0, 100, 15, 0, 1 },
+    [MOVE_TACKLE] = { TYPE_NORMAL,  35,  95, 35, 0, 0 },
+    [MOVE_TAIL_WHIP] = { TYPE_NORMAL,   0, 100, 30, 0, 1 },
+    [MOVE_GROWL] = { TYPE_NORMAL,   0, 100, 40, 0, 1 },
     [MOVE_QUICK_ATTACK] = { TYPE_NORMAL,  40, 100, 30, 1, 0 },
 };
 
 static const MoveInfo* get_move(uint8_t id) {
-    if (id >= sizeof(move_table)/sizeof(move_table[0])) return &move_table[MOVE_NONE];
+    if (id >= sizeof(move_table) / sizeof(move_table[0])) return &move_table[MOVE_NONE];
     return &move_table[id];
 }
 
@@ -46,18 +50,152 @@ typedef struct {
 } SpeciesInfo;
 
 static const SpeciesInfo species_table[] = {
-    [SPECIES_NONE]       = {  0,  0,  0,  0,  0, TYPE_NORMAL, TYPE_NORMAL, "NONE",     {0,0,0,0} },
-    [SPECIES_BULBASAUR]  = { 45, 49, 49, 45, 65, TYPE_GRASS,  TYPE_POISON, "BULBASAUR",{MOVE_TACKLE, MOVE_GROWL, 0, 0} },
+    [SPECIES_NONE] = {  0,  0,  0,  0,  0, TYPE_NORMAL, TYPE_NORMAL, "NONE",     {0,0,0,0} },
+    [SPECIES_BULBASAUR] = { 45, 49, 49, 45, 65, TYPE_GRASS,  TYPE_POISON, "BULBASAUR",{MOVE_TACKLE, MOVE_GROWL, 0, 0} },
     [SPECIES_CHARMANDER] = { 39, 52, 43, 65, 50, TYPE_FIRE,   TYPE_FIRE,   "CHARMANDER",{MOVE_SCRATCH, MOVE_GROWL, 0, 0} },
-    [SPECIES_SQUIRTLE]   = { 44, 48, 65, 43, 50, TYPE_WATER,  TYPE_WATER,  "SQUIRTLE", {MOVE_TACKLE, MOVE_TAIL_WHIP, 0, 0} },
-    [SPECIES_PIDGEY]     = { 40, 45, 40, 56, 35, TYPE_NORMAL, TYPE_FLYING, "PIDGEY",   {MOVE_GUST, MOVE_SAND_ATTACK, 0, 0} },
-    [SPECIES_RATTATA]    = { 30, 56, 35, 72, 25, TYPE_NORMAL, TYPE_NORMAL, "RATTATA",  {MOVE_TACKLE, MOVE_TAIL_WHIP, MOVE_QUICK_ATTACK, 0} },
+    [SPECIES_SQUIRTLE] = { 44, 48, 65, 43, 50, TYPE_WATER,  TYPE_WATER,  "SQUIRTLE", {MOVE_TACKLE, MOVE_TAIL_WHIP, 0, 0} },
+    [SPECIES_PIDGEY] = { 40, 45, 40, 56, 35, TYPE_NORMAL, TYPE_FLYING, "PIDGEY",   {MOVE_GUST, MOVE_SAND_ATTACK, 0, 0} },
+    [SPECIES_RATTATA] = { 30, 56, 35, 72, 25, TYPE_NORMAL, TYPE_NORMAL, "RATTATA",  {MOVE_TACKLE, MOVE_TAIL_WHIP, MOVE_QUICK_ATTACK, 0} },
 };
 
 static const SpeciesInfo* get_species(uint8_t id) {
-    if (id >= sizeof(species_table)/sizeof(species_table[0]))
+    if (id >= sizeof(species_table) / sizeof(species_table[0]))
         return &species_table[SPECIES_NONE];
     return &species_table[id];
+}
+
+/* ------------------------------------------------------------------ */
+/* Pokemon sprite loading                                              */
+/* ------------------------------------------------------------------ */
+
+static const char* species_sprite_names[] = {
+    [SPECIES_NONE] = NULL,
+    [SPECIES_BULBASAUR] = "bulbasaur",
+    [SPECIES_CHARMANDER] = "charmander",
+    [SPECIES_SQUIRTLE] = "squirtle",
+    [SPECIES_PIDGEY] = "pidgey",
+    [SPECIES_RATTATA] = "rattata",
+    /* Add more as you expand species_table */
+};
+
+#define POKEMON_FRONT_TILES_W 7
+#define POKEMON_FRONT_TILES_H 7
+#define POKEMON_BACK_TILES_W  6
+#define POKEMON_BACK_TILES_H  6
+
+#define POKEMON_FRONT_PX (POKEMON_FRONT_TILES_W * TILE_SIZE)  /* 56 */
+#define POKEMON_FRONT_PY (POKEMON_FRONT_TILES_H * TILE_SIZE)  /* 56 */
+#define POKEMON_BACK_PX  (POKEMON_BACK_TILES_W * TILE_SIZE)   /* 48 */
+#define POKEMON_BACK_PY  (POKEMON_BACK_TILES_H * TILE_SIZE)   /* 48 */
+
+typedef struct {
+    Texture2D front;
+    Texture2D back;
+    uint8_t species;
+    int loaded;
+} PokemonSprites;
+
+static PokemonSprites s_player_sprites = { 0 };
+static PokemonSprites s_enemy_sprites = { 0 };
+
+static Texture2D load_pokemon_sprite(const char* path, int fallback_side,
+    int pal_id) {
+    Texture2D tex = { 0 };
+    FILE* f = fopen(path, "rb");
+    if (!f) {
+        TraceLog(LOG_WARNING, "Could not open Pokemon sprite: %s", path);
+        return tex;
+    }
+
+    fseek(f, 0, SEEK_END);
+    long size = ftell(f);
+    fseek(f, 0, SEEK_SET);
+
+    int num_tiles = (int)(size / 16);
+
+    /* Pokemon sprites are square: N x N tiles. Derive N from tile count. */
+    int side = (int)(sqrt((double)num_tiles) + 0.5);
+    if (side * side != num_tiles) {
+        TraceLog(LOG_WARNING,
+            "Sprite %s has %d tiles (not a perfect square); using %d",
+            path, num_tiles, fallback_side);
+        side = fallback_side;
+    }
+
+    int tex_w = side * TILE_SIZE;
+    int tex_h = side * TILE_SIZE;
+    Color* pixels = (Color*)calloc((size_t)tex_w * tex_h, sizeof(Color));
+
+    const SGBPalette* sgb = (pal_id >= 0 && pal_id < NUM_SGB_PALS)
+        ? &sgb_super_palettes[pal_id] : NULL;
+
+    uint8_t tile_data[16];
+    for (int t = 0; t < num_tiles; t++) {
+        if (fread(tile_data, 1, 16, f) != 16) break;
+        int col = t % side;
+        int row = t / side;
+        for (int y = 0; y < 8; y++) {
+            uint8_t lo = tile_data[y * 2], hi = tile_data[y * 2 + 1];
+            for (int x = 0; x < 8; x++) {
+                Color c = decode_2bpp_sprite_pixel(lo, hi, 7 - x,
+                    REG_OBP0, sgb);
+                pixels[(row * 8 + y) * tex_w + (col * 8 + x)] = c;
+            }
+        }
+    }
+    fclose(f);
+
+    Image img = {
+        .data = pixels,
+        .width = tex_w,
+        .height = tex_h,
+        .mipmaps = 1,
+        .format = PIXELFORMAT_UNCOMPRESSED_R8G8B8A8
+    };
+    tex = LoadTextureFromImage(img);
+    if (tex.id) SetTextureFilter(tex, TEXTURE_FILTER_POINT);
+    free(pixels);
+    return tex;
+}
+
+static void load_pokemon_sprites(PokemonSprites* out, uint8_t species,
+    int pal_id) {
+    if (out->loaded) {
+        if (out->front.id) UnloadTexture(out->front);
+        if (out->back.id)  UnloadTexture(out->back);
+        memset(out, 0, sizeof(*out));
+    }
+
+    const char* name = NULL;
+    if (species < sizeof(species_sprite_names) / sizeof(species_sprite_names[0]))
+        name = species_sprite_names[species];
+    if (!name) return;
+
+    char path[256];
+
+    snprintf(path, sizeof(path), "%s/gfx/pokemon/front/%s.2bpp",
+        REPO_ROOT, name);
+    out->front = load_pokemon_sprite(path, 7, pal_id);   /* 7 = fallback */
+
+    snprintf(path, sizeof(path), "%s/gfx/pokemon/back/%s.2bpp",
+        REPO_ROOT, name);
+    out->back = load_pokemon_sprite(path, 6, pal_id);    /* 6 = fallback */
+
+    out->species = species;
+    out->loaded = 1;
+}
+
+void battle_unload_sprites(void) {
+    if (s_player_sprites.loaded) {
+        if (s_player_sprites.front.id) UnloadTexture(s_player_sprites.front);
+        if (s_player_sprites.back.id)  UnloadTexture(s_player_sprites.back);
+        memset(&s_player_sprites, 0, sizeof(s_player_sprites));
+    }
+    if (s_enemy_sprites.loaded) {
+        if (s_enemy_sprites.front.id) UnloadTexture(s_enemy_sprites.front);
+        if (s_enemy_sprites.back.id)  UnloadTexture(s_enemy_sprites.back);
+        memset(&s_enemy_sprites, 0, sizeof(s_enemy_sprites));
+    }
 }
 
 /* ------------------------------------------------------------------ */
@@ -93,9 +231,9 @@ static void build_mon(BattleMon* m, uint8_t species, uint8_t level, int is_playe
     m->level = level;
     m->max_hp = calc_hp_stat(s->hp, level);
     m->hp = m->max_hp;
-    m->attack  = calc_other_stat(s->atk, level);
+    m->attack = calc_other_stat(s->atk, level);
     m->defense = calc_other_stat(s->def, level);
-    m->speed   = calc_other_stat(s->spd, level);
+    m->speed = calc_other_stat(s->spd, level);
     m->special = calc_other_stat(s->spc, level);
     m->type1 = s->type1;
     m->type2 = s->type2;
@@ -114,7 +252,7 @@ static void build_mon(BattleMon* m, uint8_t species, uint8_t level, int is_playe
 /* ------------------------------------------------------------------ */
 
 static int calc_damage(const BattleMon* atk, const BattleMon* def,
-                       uint8_t move_id, int* out_crit) {
+    uint8_t move_id, int* out_crit) {
     const MoveInfo* mv = get_move(move_id);
     if (mv->is_status || mv->power == 0) { *out_crit = 0; return 0; }
 
@@ -125,9 +263,9 @@ static int calc_damage(const BattleMon* atk, const BattleMon* def,
     int power = mv->power;
 
     int is_special = (mv->type == TYPE_FIRE || mv->type == TYPE_WATER ||
-                      mv->type == TYPE_GRASS || mv->type == TYPE_ELECTRIC ||
-                      mv->type == TYPE_PSYCHIC || mv->type == TYPE_ICE ||
-                      mv->type == TYPE_DRAGON);
+        mv->type == TYPE_GRASS || mv->type == TYPE_ELECTRIC ||
+        mv->type == TYPE_PSYCHIC || mv->type == TYPE_ICE ||
+        mv->type == TYPE_DRAGON);
     int A = is_special ? atk->special : atk->attack;
     int D = is_special ? def->special : def->defense;
     if (D == 0) D = 1;
@@ -181,6 +319,10 @@ void battle_start_wild(BattleState* bs, uint8_t enemy_species, uint8_t enemy_lev
     build_mon(&bs->player_mon, SPECIES_CHARMANDER, 5, 1);
     build_mon(&bs->enemy_mon, enemy_species, enemy_level, 0);
 
+    /* --- ADDED: load sprites for both combatants --- */
+    load_pokemon_sprites(&s_player_sprites, bs->player_mon.species, PAL_REDMON);
+    load_pokemon_sprites(&s_enemy_sprites, bs->enemy_mon.species, PAL_BLUEMON);
+
     char buf[80];
     snprintf(buf, sizeof(buf), "Wild %s appeared!", bs->enemy_mon.name);
     set_message(bs, buf);
@@ -198,10 +340,10 @@ static void do_player_attack(BattleState* bs, uint8_t move_id) {
     if (mv->is_status) {
         char buf[80];
         snprintf(buf, sizeof(buf), "%s used %s!",
-                 bs->player_mon.name,
-                 move_id == MOVE_GROWL ? "GROWL" :
-                 move_id == MOVE_TAIL_WHIP ? "TAIL WHIP" :
-                 move_id == MOVE_SAND_ATTACK ? "SAND-ATTACK" : "MOVE");
+            bs->player_mon.name,
+            move_id == MOVE_GROWL ? "GROWL" :
+            move_id == MOVE_TAIL_WHIP ? "TAIL WHIP" :
+            move_id == MOVE_SAND_ATTACK ? "SAND-ATTACK" : "MOVE");
         set_message(bs, buf);
         bs->phase = BATTLE_PHASE_MESSAGE;
         return;
@@ -225,10 +367,10 @@ static void do_player_attack(BattleState* bs, uint8_t move_id) {
     char buf[80];
     if (crit)
         snprintf(buf, sizeof(buf), "Critical hit! %s took %d damage!",
-                 bs->enemy_mon.name, dmg);
+            bs->enemy_mon.name, dmg);
     else
         snprintf(buf, sizeof(buf), "%s took %d damage!",
-                 bs->enemy_mon.name, dmg);
+            bs->enemy_mon.name, dmg);
     set_message(bs, buf);
     bs->phase = BATTLE_PHASE_MESSAGE;
 }
@@ -273,10 +415,10 @@ static void do_enemy_attack(BattleState* bs) {
     char buf[80];
     if (crit)
         snprintf(buf, sizeof(buf), "Critical hit! %s took %d damage!",
-                 bs->player_mon.name, dmg);
+            bs->player_mon.name, dmg);
     else
         snprintf(buf, sizeof(buf), "%s took %d damage!",
-                 bs->player_mon.name, dmg);
+            bs->player_mon.name, dmg);
     set_message(bs, buf);
     bs->phase = BATTLE_PHASE_MESSAGE;
 }
@@ -315,33 +457,34 @@ static void finish_turn(BattleState* bs) {
 /* ------------------------------------------------------------------ */
 
 static int read_menu_input(BattleState* bs, int count, int is_grid,
-                           int* cursor, int* cancel_out) {
-    int up     = IsKeyDown(KEY_UP)    || IsKeyDown(KEY_W);
-    int down   = IsKeyDown(KEY_DOWN)  || IsKeyDown(KEY_S);
-    int left   = IsKeyDown(KEY_LEFT)  || IsKeyDown(KEY_A);
-    int right  = IsKeyDown(KEY_RIGHT) || IsKeyDown(KEY_D);
+    int* cursor, int* cancel_out) {
+    int up = IsKeyDown(KEY_UP) || IsKeyDown(KEY_W);
+    int down = IsKeyDown(KEY_DOWN) || IsKeyDown(KEY_S);
+    int left = IsKeyDown(KEY_LEFT) || IsKeyDown(KEY_A);
+    int right = IsKeyDown(KEY_RIGHT) || IsKeyDown(KEY_D);
     int select = IsKeyDown(KEY_ENTER) || IsKeyDown(KEY_Z) || IsKeyDown(KEY_SPACE);
     int cancel = IsKeyDown(KEY_ESCAPE) || IsKeyDown(KEY_X);
 
-    int up_edge     = up     && !bs->prev_up;
-    int down_edge   = down   && !bs->prev_down;
-    int left_edge   = left   && !bs->prev_left;
-    int right_edge  = right  && !bs->prev_right;
+    int up_edge = up && !bs->prev_up;
+    int down_edge = down && !bs->prev_down;
+    int left_edge = left && !bs->prev_left;
+    int right_edge = right && !bs->prev_right;
     int select_edge = select && !bs->prev_select;
     int cancel_edge = cancel && !bs->prev_cancel;
 
     if (is_grid) {
         if (up_edge || down_edge)   *cursor ^= 2;
         if (left_edge || right_edge) *cursor ^= 1;
-    } else {
+    }
+    else {
         if (up_edge)   *cursor = (*cursor - 1 + count) % count;
         if (down_edge) *cursor = (*cursor + 1) % count;
     }
 
-    bs->prev_up     = up;
-    bs->prev_down   = down;
-    bs->prev_left   = left;
-    bs->prev_right  = right;
+    bs->prev_up = up;
+    bs->prev_down = down;
+    bs->prev_left = left;
+    bs->prev_right = right;
     bs->prev_select = select;
     bs->prev_cancel = cancel;
 
@@ -370,18 +513,20 @@ void battle_update(BattleState* bs, Player* player) {
     case BATTLE_PHASE_MENU: {
         int cancel = 0;
         if (read_menu_input(bs, BATTLE_MENU_COUNT, 1,
-                            &bs->menu_cursor, &cancel)) {
+            &bs->menu_cursor, &cancel)) {
             BattleMenuItem sel = (BattleMenuItem)bs->menu_cursor;
             if (sel == BATTLE_MENU_FIGHT) {
                 bs->phase = BATTLE_PHASE_MOVE_SELECT;
                 bs->move_cursor = 0;
                 bs->phase_timer = 0;
-            } else if (sel == BATTLE_MENU_RUN) {
+            }
+            else if (sel == BATTLE_MENU_RUN) {
                 set_message(bs, "Got away safely!");
                 bs->battle_result = 3;
                 bs->phase = BATTLE_PHASE_MESSAGE;
                 bs->phase_timer = 0;
-            } else {
+            }
+            else {
                 set_message(bs, "Not available yet!");
                 bs->phase = BATTLE_PHASE_MESSAGE;
                 bs->phase_timer = 0;
@@ -398,7 +543,7 @@ void battle_update(BattleState* bs, Player* player) {
 
         int cancel = 0;
         int confirm = read_menu_input(bs, num_moves, 0,
-                                      &bs->move_cursor, &cancel);
+            &bs->move_cursor, &cancel);
 
         if (cancel) {
             bs->phase = BATTLE_PHASE_MENU;
@@ -423,7 +568,8 @@ void battle_update(BattleState* bs, Player* player) {
 
             if (player_first) {
                 do_player_attack(bs, chosen);
-            } else {
+            }
+            else {
                 do_enemy_attack(bs);
             }
             bs->move_cursor = (chosen & 0xFF);
@@ -446,7 +592,8 @@ void battle_update(BattleState* bs, Player* player) {
             if (bs->player_went_first) {
                 if (bs->enemy_mon.hp == 0) { finish_turn(bs); break; }
                 do_enemy_attack(bs);
-            } else {
+            }
+            else {
                 if (bs->player_mon.hp == 0) { finish_turn(bs); break; }
                 do_player_attack(bs, chosen);
             }
@@ -474,7 +621,8 @@ void battle_update(BattleState* bs, Player* player) {
         bs->battle_result = 1;
         bs->phase = BATTLE_PHASE_MESSAGE;
         bs->phase_timer = 0;
-    } else if (bs->player_mon.hp == 0 && bs->battle_result == 0) {
+    }
+    else if (bs->player_mon.hp == 0 && bs->battle_result == 0) {
         bs->player_mon.fainted = 1;
         set_message(bs, "Your Pokemon fainted!");
         bs->battle_result = 2;
@@ -561,7 +709,7 @@ static void draw_name_fit(const char* name, int x, int y, int max_width, Color c
 
 static void draw_hp_bar(int x, int y, int w, int h, uint16_t cur, uint16_t max) {
     DrawRectangle(x, y, w, h, BLACK);
-    DrawRectangle(x + 1, y + 1, w - 2, h - 2, (Color){ 80, 80, 80, 255 });
+    DrawRectangle(x + 1, y + 1, w - 2, h - 2, (Color) { 80, 80, 80, 255 });
     if (max == 0) return;
     float pct = (float)cur / (float)max;
     if (pct < 0) pct = 0;
@@ -576,7 +724,7 @@ static void draw_hp_bar(int x, int y, int w, int h, uint16_t cur, uint16_t max) 
 
 static void draw_info_box(const BattleMon* m, int x, int y) {
     int w = 96, h = 36;
-    DrawRectangle(x, y, w, h, (Color){ 248, 248, 248, 255 });
+    DrawRectangle(x, y, w, h, (Color) { 248, 248, 248, 255 });
     DrawRectangleLines(x, y, w, h, BLACK);
 
     /* Level right-aligned using the smaller info font. */
@@ -624,7 +772,8 @@ static void draw_message(const char* msg, int x, int y) {
         const char* rest = msg + split;
         while (*rest == ' ') rest++;
         strncpy(line2, rest, sizeof(line2) - 1);
-    } else {
+    }
+    else {
         strncpy(line1, msg, sizeof(line1) - 1);
     }
 
@@ -637,19 +786,47 @@ static void render_battle_to_layer(const BattleState* bs) {
     ensure_battle_layer();
 
     BeginTextureMode(s_battle_layer);
-    ClearBackground((Color){ 248, 248, 216, 255 });
+    ClearBackground((Color) { 248, 248, 216, 255 });
 
-    /* Enemy sprite placeholder (right side, above the message box) */
-    DrawRectangle(108, 20, 40, 40, (Color){ 180, 60, 60, 255 });
-    DrawRectangleLines(108, 20, 40, 40, BLACK);
-    draw_text10("ENEMY", 110, 34, WHITE);
+    /* Enemy sprite (front view, top-right) */
+    if (s_enemy_sprites.loaded && s_enemy_sprites.front.id) {
+        float w = (float)s_enemy_sprites.front.width;
+        float h = (float)s_enemy_sprites.front.height;
+        float ex = (float)(GB_WIDTH - 8) - w;
+        float ey = 8.0f;
+        Rectangle src = { 0, 0, w, h };
+        Rectangle dst = { ex, ey, w, h };
+        DrawTexturePro(s_enemy_sprites.front, src, dst,
+            (Vector2) {
+            0, 0
+        }, 0.0f, WHITE);
+    }
+    else {
+        DrawRectangle(108, 20, 40, 40, (Color) { 180, 60, 60, 255 });
+        DrawRectangleLines(108, 20, 40, 40, BLACK);
+        draw_text10("ENEMY", 110, 34, WHITE);
+    }
 
-    /* Player sprite placeholder (left side, above the message box) */
-    DrawRectangle(20, 60, 40, 40, (Color){ 60, 120, 200, 255 });
-    DrawRectangleLines(20, 60, 40, 40, BLACK);
-    draw_text10("YOU", 30, 74, WHITE);
+    /* Player sprite (back view, bottom-left) */
+    if (s_player_sprites.loaded && s_player_sprites.back.id) {
+        float w = (float)s_player_sprites.back.width;
+        float h = (float)s_player_sprites.back.height;
+        float px = 8.0f;
+        float py = (float)(110) - h - 4.0f;
+        Rectangle src = { 0, 0, w, h };
+        Rectangle dst = { px, py, w, h };
+        DrawTexturePro(s_player_sprites.back, src, dst,
+            (Vector2) {
+            0, 0
+        }, 0.0f, WHITE);
+    }
+    else {
+        DrawRectangle(20, 60, 40, 40, (Color) { 60, 120, 200, 255 });
+        DrawRectangleLines(20, 60, 40, 40, BLACK);
+        draw_text10("YOU", 30, 74, WHITE);
+    }
 
-    /* Info boxes — 96 wide, positioned to avoid the sprites */
+    /* Info boxes */
     draw_info_box(&bs->enemy_mon, 2, 4);
     draw_info_box(&bs->player_mon, 62, 68);
 
@@ -660,17 +837,17 @@ static void render_battle_to_layer(const BattleState* bs) {
     if (bs->phase == BATTLE_PHASE_MENU) {
         /* Prompt on the left, 2x2 menu on the right with wide spacing. */
         draw_text10("What will", 4, 114, BLACK);
-        draw_text10("you do?",   4, 126, BLACK);
+        draw_text10("you do?", 4, 126, BLACK);
 
-        Color c_fight = (bs->menu_cursor == BATTLE_MENU_FIGHT)   ? RED : BLACK;
-        Color c_item  = (bs->menu_cursor == BATTLE_MENU_ITEM)    ? RED : BLACK;
-        Color c_pkmn  = (bs->menu_cursor == BATTLE_MENU_POKEMON) ? RED : BLACK;
-        Color c_run   = (bs->menu_cursor == BATTLE_MENU_RUN)     ? RED : BLACK;
+        Color c_fight = (bs->menu_cursor == BATTLE_MENU_FIGHT) ? RED : BLACK;
+        Color c_item = (bs->menu_cursor == BATTLE_MENU_ITEM) ? RED : BLACK;
+        Color c_pkmn = (bs->menu_cursor == BATTLE_MENU_POKEMON) ? RED : BLACK;
+        Color c_run = (bs->menu_cursor == BATTLE_MENU_RUN) ? RED : BLACK;
 
-        draw_text10("FIGHT", 78,  114, c_fight);
-        draw_text10("ITEM",  126, 114, c_item);
-        draw_text10("PKMN",  78,  126, c_pkmn);
-        draw_text10("RUN",   126, 126, c_run);
+        draw_text10("FIGHT", 78, 114, c_fight);
+        draw_text10("ITEM", 126, 114, c_item);
+        draw_text10("PKMN", 78, 126, c_pkmn);
+        draw_text10("RUN", 126, 126, c_run);
     }
     else if (bs->phase == BATTLE_PHASE_MOVE_SELECT) {
         int mx = 4, my = 114;
@@ -690,7 +867,7 @@ static void render_battle_to_layer(const BattleState* bs) {
             default: break;
             }
             draw_text10(name, mx, my + row * 11,
-                        (i == bs->move_cursor) ? RED : BLACK);
+                (i == bs->move_cursor) ? RED : BLACK);
             row++;
         }
         draw_text10("X: Back", 108, 126, DARKGRAY);
@@ -708,5 +885,7 @@ void battle_render(const BattleState* bs) {
     Rectangle src = { 0, 0, (float)GB_WIDTH, (float)GB_HEIGHT };
     Rectangle dst = { 0, 0, (float)GB_WIDTH, (float)GB_HEIGHT };
     DrawTexturePro(s_battle_layer.texture, src, dst,
-                   (Vector2){ 0, 0 }, 0.0f, WHITE);
+        (Vector2) {
+        0, 0
+    }, 0.0f, WHITE);
 }

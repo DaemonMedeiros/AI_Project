@@ -1006,6 +1006,9 @@ int main(void) {
     UnloadRenderTexture(sprite_layer);
     UnloadRenderTexture(bg_layer);
     UnloadRenderTexture(target);
+
+    battle_unload_sprites();   /* <-- ADDED */
+
     CloseWindow();
     return 0;
 }

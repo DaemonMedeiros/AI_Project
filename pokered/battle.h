@@ -112,4 +112,7 @@ void battle_render(const BattleState* bs);
 /* Helpers */
 int  battle_is_active(const BattleState* bs);
 
+/* Cleanup (call before CloseWindow) */
+void battle_unload_sprites(void);
+
 #endif
