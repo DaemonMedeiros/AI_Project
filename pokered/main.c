@@ -122,6 +122,27 @@ static uint8_t ascii_to_font(unsigned char c) {
     return 0xFF;
 }
 
+/* Compute the destination rectangle on screen that preserves the
+   Game Boy's aspect ratio (and optionally uses integer scaling for
+   crisp pixels). The returned rectangle is centered. */
+static Rectangle compute_blit_rect(int screen_w, int screen_h) {
+    float scale_x = (float)screen_w / (float)GB_WIDTH;
+    float scale_y = (float)screen_h / (float)GB_HEIGHT;
+    float fit_scale = (scale_x < scale_y) ? scale_x : scale_y;
+
+    /* Prefer integer scaling for pixel-perfect output. */
+    int iscale = (int)fit_scale;
+    if (iscale < 1) iscale = 1;
+    fit_scale = (float)iscale;
+
+    float draw_w = (float)GB_WIDTH * fit_scale;
+    float draw_h = (float)GB_HEIGHT * fit_scale;
+    float draw_x = ((float)screen_w - draw_w) * 0.5f;
+    float draw_y = ((float)screen_h - draw_h) * 0.5f;
+
+    return (Rectangle) { draw_x, draw_y, draw_w, draw_h };
+}
+
 int main(void) {
     const MapPaths paths = {
         .map_const_path = REPO_ROOT "/constants/map_constants.asm",
@@ -138,8 +159,10 @@ int main(void) {
     const char* player_sprite_path = REPO_ROOT "/gfx/sprites/red.2bpp";
     const char* shadow_path = REPO_ROOT "/gfx/overworld/shadow.1bpp";
 
+    SetConfigFlags(FLAG_WINDOW_RESIZABLE | FLAG_VSYNC_HINT);
     InitWindow(GB_WIDTH * SCALE, GB_HEIGHT * SCALE, "Pokered");
     SetTargetFPS(60);
+    SetWindowMinSize(GB_WIDTH * 2, GB_HEIGHT * 2);
 
     RenderTexture2D target = LoadRenderTexture(GB_WIDTH, GB_HEIGHT);
     SetTextureFilter(target.texture, TEXTURE_FILTER_POINT);
@@ -953,9 +976,11 @@ int main(void) {
 
         BeginDrawing();
         ClearBackground(BLACK);
+
         Rectangle src_rect = { 0, 0, (float)GB_WIDTH, (float)GB_HEIGHT };
-        Rectangle dst_rect = { 0, 0, (float)(GB_WIDTH * SCALE), (float)(GB_HEIGHT * SCALE) };
+        Rectangle dst_rect = compute_blit_rect(GetScreenWidth(), GetScreenHeight());
         DrawTexturePro(target.texture, src_rect, dst_rect, (Vector2) { 0, 0 }, 0.0f, WHITE);
+
         EndDrawing();
     }
 
@@ -982,5 +1007,5 @@ int main(void) {
     UnloadRenderTexture(bg_layer);
     UnloadRenderTexture(target);
     CloseWindow();
-	return 0;
+    return 0;
 }
