@@ -7,7 +7,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
-#include <math.h>
+#include <math.h>        /* for sqrt */
 
                             /* ------------------------------------------------------------------ */
                             /* Move data                                                           */
@@ -78,16 +78,6 @@ static const char* species_sprite_names[] = {
     /* Add more as you expand species_table */
 };
 
-#define POKEMON_FRONT_TILES_W 7
-#define POKEMON_FRONT_TILES_H 7
-#define POKEMON_BACK_TILES_W  6
-#define POKEMON_BACK_TILES_H  6
-
-#define POKEMON_FRONT_PX (POKEMON_FRONT_TILES_W * TILE_SIZE)  /* 56 */
-#define POKEMON_FRONT_PY (POKEMON_FRONT_TILES_H * TILE_SIZE)  /* 56 */
-#define POKEMON_BACK_PX  (POKEMON_BACK_TILES_W * TILE_SIZE)   /* 48 */
-#define POKEMON_BACK_PY  (POKEMON_BACK_TILES_H * TILE_SIZE)   /* 48 */
-
 typedef struct {
     Texture2D front;
     Texture2D back;
@@ -98,8 +88,27 @@ typedef struct {
 static PokemonSprites s_player_sprites = { 0 };
 static PokemonSprites s_enemy_sprites = { 0 };
 
-static Texture2D load_pokemon_sprite(const char* path, int fallback_side,
-    int pal_id) {
+/* Find the best (w, h) grid for a tile count. Pokered sprites are roughly
+ * square, but not guaranteed to be exactly square. We pick the factor
+ * pair that minimizes |w - h|. */
+static void best_grid_for_tiles(int num_tiles, int* out_w, int* out_h) {
+    int best_w = 1, best_h = num_tiles;
+    int best_diff = num_tiles;
+    for (int w = 1; w <= num_tiles; w++) {
+        if (num_tiles % w != 0) continue;
+        int h = num_tiles / w;
+        int diff = (w > h) ? (w - h) : (h - w);
+        if (diff < best_diff) {
+            best_diff = diff;
+            best_w = w;
+            best_h = h;
+        }
+    }
+    *out_w = best_w;
+    *out_h = best_h;
+}
+
+static Texture2D load_pokemon_sprite(const char* path, int pal_id) {
     Texture2D tex = { 0 };
     FILE* f = fopen(path, "rb");
     if (!f) {
@@ -112,18 +121,20 @@ static Texture2D load_pokemon_sprite(const char* path, int fallback_side,
     fseek(f, 0, SEEK_SET);
 
     int num_tiles = (int)(size / 16);
-
-    /* Pokemon sprites are square: N x N tiles. Derive N from tile count. */
-    int side = (int)(sqrt((double)num_tiles) + 0.5);
-    if (side * side != num_tiles) {
-        TraceLog(LOG_WARNING,
-            "Sprite %s has %d tiles (not a perfect square); using %d",
-            path, num_tiles, fallback_side);
-        side = fallback_side;
+    if (num_tiles < 1) {
+        fclose(f);
+        TraceLog(LOG_WARNING, "Sprite %s is empty", path);
+        return tex;
     }
 
-    int tex_w = side * TILE_SIZE;
-    int tex_h = side * TILE_SIZE;
+    int tiles_wide, tiles_high;
+    best_grid_for_tiles(num_tiles, &tiles_wide, &tiles_high);
+
+    TraceLog(LOG_INFO, "Sprite %s: %d tiles -> %dx%d grid",
+        path, num_tiles, tiles_wide, tiles_high);
+
+    int tex_w = tiles_wide * TILE_SIZE;
+    int tex_h = tiles_high * TILE_SIZE;
     Color* pixels = (Color*)calloc((size_t)tex_w * tex_h, sizeof(Color));
 
     const SGBPalette* sgb = (pal_id >= 0 && pal_id < NUM_SGB_PALS)
@@ -132,8 +143,8 @@ static Texture2D load_pokemon_sprite(const char* path, int fallback_side,
     uint8_t tile_data[16];
     for (int t = 0; t < num_tiles; t++) {
         if (fread(tile_data, 1, 16, f) != 16) break;
-        int col = t % side;
-        int row = t / side;
+        int col = t % tiles_wide;
+        int row = t / tiles_wide;
         for (int y = 0; y < 8; y++) {
             uint8_t lo = tile_data[y * 2], hi = tile_data[y * 2 + 1];
             for (int x = 0; x < 8; x++) {
@@ -169,17 +180,26 @@ static void load_pokemon_sprites(PokemonSprites* out, uint8_t species,
     const char* name = NULL;
     if (species < sizeof(species_sprite_names) / sizeof(species_sprite_names[0]))
         name = species_sprite_names[species];
-    if (!name) return;
+    if (!name) {
+        TraceLog(LOG_WARNING, "load_pokemon_sprites: no name for species %d",
+            species);
+        return;
+    }
 
     char path[256];
 
     snprintf(path, sizeof(path), "%s/gfx/pokemon/front/%s.2bpp",
         REPO_ROOT, name);
-    out->front = load_pokemon_sprite(path, 7, pal_id);   /* 7 = fallback */
+    out->front = load_pokemon_sprite(path, pal_id);
+    TraceLog(LOG_INFO, "FRONT %s: id=%u w=%d h=%d",
+        path, out->front.id, out->front.width, out->front.height);
 
-    snprintf(path, sizeof(path), "%s/gfx/pokemon/back/%s.2bpp",
+    /* Back sprites use the "<name>b.2bpp" convention (e.g. charmanderb.2bpp) */
+    snprintf(path, sizeof(path), "%s/gfx/pokemon/back/%sb.2bpp",
         REPO_ROOT, name);
-    out->back = load_pokemon_sprite(path, 6, pal_id);    /* 6 = fallback */
+    out->back = load_pokemon_sprite(path, pal_id);
+    TraceLog(LOG_INFO, "BACK  %s: id=%u w=%d h=%d",
+        path, out->back.id, out->back.width, out->back.height);
 
     out->species = species;
     out->loaded = 1;
@@ -319,7 +339,7 @@ void battle_start_wild(BattleState* bs, uint8_t enemy_species, uint8_t enemy_lev
     build_mon(&bs->player_mon, SPECIES_CHARMANDER, 5, 1);
     build_mon(&bs->enemy_mon, enemy_species, enemy_level, 0);
 
-    /* --- ADDED: load sprites for both combatants --- */
+    /* Load sprites for both combatants */
     load_pokemon_sprites(&s_player_sprites, bs->player_mon.species, PAL_REDMON);
     load_pokemon_sprites(&s_enemy_sprites, bs->enemy_mon.species, PAL_BLUEMON);
 
@@ -789,7 +809,7 @@ static void render_battle_to_layer(const BattleState* bs) {
     ClearBackground((Color) { 248, 248, 216, 255 });
 
     /* Enemy sprite (front view, top-right) */
-    if (s_enemy_sprites.loaded && s_enemy_sprites.front.id) {
+    if (s_enemy_sprites.loaded && s_enemy_sprites.front.id != 0) {
         float w = (float)s_enemy_sprites.front.width;
         float h = (float)s_enemy_sprites.front.height;
         float ex = (float)(GB_WIDTH - 8) - w;
@@ -807,12 +827,16 @@ static void render_battle_to_layer(const BattleState* bs) {
         draw_text10("ENEMY", 110, 34, WHITE);
     }
 
-    /* Player sprite (back view, bottom-left) */
-    if (s_player_sprites.loaded && s_player_sprites.back.id) {
+    /* Player sprite (back view, bottom-left)
+     *
+     * NOTE: the placeholder is MAGENTA so you can tell it apart from any
+     * other blue draw call that might be covering the sprite. Change back
+     * to (Color){ 60, 120, 200, 255 } once everything works. */
+    if (s_player_sprites.loaded && s_player_sprites.back.id != 0) {
         float w = (float)s_player_sprites.back.width;
         float h = (float)s_player_sprites.back.height;
         float px = 8.0f;
-        float py = (float)(110) - h - 4.0f;
+        float py = 110.0f - h - 4.0f;
         Rectangle src = { 0, 0, w, h };
         Rectangle dst = { px, py, w, h };
         DrawTexturePro(s_player_sprites.back, src, dst,
@@ -821,12 +845,12 @@ static void render_battle_to_layer(const BattleState* bs) {
         }, 0.0f, WHITE);
     }
     else {
-        DrawRectangle(20, 60, 40, 40, (Color) { 60, 120, 200, 255 });
+        DrawRectangle(20, 60, 40, 40, MAGENTA);
         DrawRectangleLines(20, 60, 40, 40, BLACK);
         draw_text10("YOU", 30, 74, WHITE);
     }
 
-    /* Info boxes */
+    /* Info boxes — 96 wide, positioned to avoid the sprites */
     draw_info_box(&bs->enemy_mon, 2, 4);
     draw_info_box(&bs->player_mon, 62, 68);
 
