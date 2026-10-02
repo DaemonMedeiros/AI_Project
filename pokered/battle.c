@@ -836,9 +836,9 @@ static void render_battle_to_layer(const BattleState* bs) {
         float w = (float)s_player_sprites.back.width;
         float h = (float)s_player_sprites.back.height;
         float px = 8.0f;
-        float py = 110.0f - h - 4.0f;
+        float py = 110.0f - h * 2 + 2;
         Rectangle src = { 0, 0, w, h };
-        Rectangle dst = { px, py, w, h };
+        Rectangle dst = { px, py, w * 2, h * 2 };
         DrawTexturePro(s_player_sprites.back, src, dst,
             (Vector2) {
             0, 0

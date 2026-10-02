@@ -28,3 +28,4 @@ raylib-*/
 
 # NOTE: resources/ at the project root is SOURCE data — do not ignore it.
 # Only the copy under bin/resources/ (covered by "bin/" above) is generated.
+/pokered/enc_temp_folder
