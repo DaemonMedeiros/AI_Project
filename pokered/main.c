@@ -186,7 +186,7 @@ int main(void) {
     int loc_pw_isprio = GetShaderLocation(prio_write_shader, "isPrio");
 
     ActiveMap current = { 0 };
-    if (!load_map(&current, "VIRIDIAN_CITY", paths.map_const_path,
+    if (!load_map(&current, "PALLET_TOWN", paths.map_const_path,
         paths.headers_dir, paths.objects_dir, paths.maps_dir,
         paths.tilesets_dir, paths.blocksets_dir, paths.collision_path)) {
         UnloadShader(priority_shader);
